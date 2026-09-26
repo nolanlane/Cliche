@@ -1,0 +1,6 @@
+.godot/
+*.import
+*.uid
+*.bak
+debug_screenshot.png
+backrooms_wallpapers_*.jpg
