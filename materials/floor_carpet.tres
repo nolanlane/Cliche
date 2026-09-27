@@ -1,0 +1,15 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[ext_resource type="Texture2D" path="res://carpet_albedo.png" id="1_ytkb3"]
+[ext_resource type="Texture2D" path="res://carpet_normal.png" id="2_jiy87"]
+
+[resource]
+albedo_color = Color(0.92, 0.9, 0.84, 1)
+albedo_texture = ExtResource("1_ytkb3")
+roughness = 0.94
+normal_enabled = true
+normal_scale = 0.9
+normal_texture = ExtResource("2_jiy87")
+uv1_scale = Vector3(0.5, 0.5, 0.5)
+uv1_triplanar = true
+uv1_world_triplanar = true

@@ -1,0 +1,9 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://shaders/observer_suit.gdshader" id="1_w6hr8"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_w6hr8")
+shader_parameter/presence = null
+shader_parameter/threat = null

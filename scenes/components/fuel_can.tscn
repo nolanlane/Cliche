@@ -1,0 +1,91 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/fuel_can.gd" id="1_5h8st"]
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_j3mds"]
+radius = 0.65
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_sy1b0"]
+albedo_color = Color(0.8509804, 0.60784316, 0.14901961, 1)
+metallic = 0.7
+roughness = 0.35
+
+[sub_resource type="BoxMesh" id="BoxMesh_yhy37"]
+material = SubResource("StandardMaterial3D_sy1b0")
+size = Vector3(0.07, 0.11, 0.035)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_kuenb"]
+albedo_color = Color(0.078431375, 0.078431375, 0.07058824, 1)
+roughness = 0.85
+
+[sub_resource type="BoxMesh" id="BoxMesh_sx302"]
+material = SubResource("StandardMaterial3D_kuenb")
+size = Vector3(0.071, 0.046, 0.036)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_8juv0"]
+albedo_color = Color(0.77254903, 0.7882353, 0.8, 1)
+metallic = 0.95
+roughness = 0.22
+
+[sub_resource type="BoxMesh" id="BoxMesh_wa70u"]
+material = SubResource("StandardMaterial3D_8juv0")
+size = Vector3(0.068, 0.008, 0.034)
+
+[sub_resource type="BoxMesh" id="BoxMesh_d8w0f"]
+material = SubResource("StandardMaterial3D_8juv0")
+size = Vector3(0.068, 0.008, 0.034)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_yxf2m"]
+material = SubResource("StandardMaterial3D_8juv0")
+top_radius = 0.006
+bottom_radius = 0.007
+height = 0.012
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_luae7"]
+albedo_color = Color(0.84705883, 0.15686275, 0.15686275, 1)
+roughness = 0.38
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_bhys8"]
+material = SubResource("StandardMaterial3D_luae7")
+top_radius = 0.0025
+bottom_radius = 0.0042
+height = 0.022
+
+[node name="FuelCan" type="Area3D" unique_id=2061266673]
+script = ExtResource("1_5h8st")
+
+[node name="Collision" type="CollisionShape3D" parent="." unique_id=1908051445]
+shape = SubResource("SphereShape3D_j3mds")
+
+[node name="Visual" type="Node3D" parent="." unique_id=1158533460]
+
+[node name="Body" type="MeshInstance3D" parent="Visual" unique_id=48880284]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.055, 0)
+mesh = SubResource("BoxMesh_yhy37")
+
+[node name="Band" type="MeshInstance3D" parent="Visual" unique_id=1245431714]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.055, 0)
+mesh = SubResource("BoxMesh_sx302")
+
+[node name="TopRim" type="MeshInstance3D" parent="Visual" unique_id=217844424]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.114, 0)
+mesh = SubResource("BoxMesh_wa70u")
+
+[node name="BtmRim" type="MeshInstance3D" parent="Visual" unique_id=1566031429]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.004, 0)
+mesh = SubResource("BoxMesh_d8w0f")
+
+[node name="SpoutCollar" type="MeshInstance3D" parent="Visual" unique_id=1879246864]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.014, 0.124, 0)
+mesh = SubResource("CylinderMesh_yxf2m")
+
+[node name="Spout" type="MeshInstance3D" parent="Visual" unique_id=1565638232]
+transform = Transform3D(0.90630776, 0.42261827, 0, -0.42261827, 0.90630776, 0, 0, 0, 1, 0.019, 0.138, 0)
+mesh = SubResource("CylinderMesh_bhys8")
+
+[node name="Glow" type="OmniLight3D" parent="." unique_id=61647607]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.08, 0)
+light_color = Color(1, 0.7019608, 0.2784314, 1)
+light_energy = 0.45
+omni_range = 1.8
+omni_attenuation = 1.6

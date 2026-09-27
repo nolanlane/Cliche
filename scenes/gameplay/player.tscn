@@ -1,0 +1,7 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://player.gd" id="1_wgl7f"]
+
+[node name="Player" type="CharacterBody3D" unique_id=152004192]
+transform = Transform3D(0.99026805, 0, 0.1391731, 0, 1, 0, -0.1391731, 0, 0.99026805, 1.2, 0.05, 3.2)
+script = ExtResource("1_wgl7f")

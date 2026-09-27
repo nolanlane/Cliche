@@ -1,0 +1,155 @@
+[gd_scene format=3]
+
+[ext_resource type="Shader" path="res://shaders/hud_atmosphere.gdshader" id="1_jitls"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_3qdtj"]
+shader = ExtResource("1_jitls")
+shader_parameter/vignette_intensity = null
+shader_parameter/vignette_opacity = null
+shader_parameter/presence = null
+shader_parameter/danger = null
+shader_parameter/exposure = null
+shader_parameter/proximity = null
+shader_parameter/capture = null
+shader_parameter/capture_phase = null
+shader_parameter/silence = null
+
+[node name="HUD" type="CanvasLayer" unique_id=830624039]
+
+[node name="Vignette" type="ColorRect" parent="." unique_id=1602478546]
+material = SubResource("ShaderMaterial_3qdtj")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="StatusCard" type="ColorRect" parent="." unique_id=1437938344]
+offset_left = 24.0
+offset_top = 22.0
+offset_right = 364.0
+offset_bottom = 160.0
+color = Color(0.03, 0.03, 0.02, 0.82)
+
+[node name="Title" type="Label" parent="StatusCard" unique_id=1312772699]
+layout_mode = 0
+offset_left = 16.0
+offset_top = 8.0
+offset_right = 16.0
+offset_bottom = 8.0
+theme_override_font_sizes/font_size = 24
+theme_override_colors/font_color = Color(0.9098039, 0.8392157, 0.65882355, 1)
+text = "CLICHE"
+
+[node name="Level" type="Label" parent="StatusCard" unique_id=1457898672]
+layout_mode = 0
+offset_left = 18.0
+offset_top = 40.0
+offset_right = 18.0
+offset_bottom = 40.0
+theme_override_font_sizes/font_size = 11
+theme_override_colors/font_color = Color(0.6509804, 0.57254905, 0.3764706, 1)
+text = "LEVEL 0   //   THE YELLOW COMPLEX"
+
+[node name="Instructions" type="Label" parent="StatusCard" unique_id=1209089704]
+layout_mode = 0
+offset_left = 18.0
+offset_top = 58.0
+offset_right = 18.0
+offset_bottom = 58.0
+theme_override_font_sizes/font_size = 10
+theme_override_colors/font_color = Color(0.49803922, 0.4509804, 0.2901961, 1)
+text = "WASD MOVE   SHIFT SPRINT   CTRL CROUCH   SPACE JUMP   F LIGHTER"
+
+[node name="FuelTitle" type="Label" parent="StatusCard" unique_id=1210797661]
+layout_mode = 0
+offset_left = 18.0
+offset_top = 78.0
+offset_right = 18.0
+offset_bottom = 78.0
+theme_override_font_sizes/font_size = 10
+theme_override_colors/font_color = Color(0.76862746, 0.6431373, 0.3529412, 1)
+text = "LIGHTER FUEL"
+
+[node name="FuelStatus" type="Label" parent="StatusCard" unique_id=913935219]
+layout_mode = 0
+offset_left = 178.0
+offset_top = 78.0
+offset_right = 324.0
+offset_bottom = 101.0
+theme_override_font_sizes/font_size = 10
+theme_override_colors/font_color = Color(0.8352941, 0.7529412, 0.48235294, 1)
+text = "STOWED"
+horizontal_alignment = 2
+
+[node name="GaugeBg" type="ColorRect" parent="StatusCard" unique_id=1916094607]
+layout_mode = 0
+offset_left = 18.0
+offset_top = 96.0
+offset_right = 214.0
+offset_bottom = 104.0
+color = Color(0.12, 0.11, 0.08, 0.95)
+
+[node name="GaugeFill" type="ColorRect" parent="StatusCard" unique_id=568367465]
+layout_mode = 0
+offset_left = 18.0
+offset_top = 96.0
+offset_right = 214.0
+offset_bottom = 104.0
+color = Color(0.84705883, 0.5647059, 0.15686275, 1)
+
+[node name="Notch_1" type="ColorRect" parent="StatusCard" unique_id=194531634]
+layout_mode = 0
+offset_left = 67.0
+offset_top = 96.0
+offset_right = 68.0
+offset_bottom = 104.0
+color = Color(0.04, 0.04, 0.03, 0.85)
+
+[node name="Notch_2" type="ColorRect" parent="StatusCard" unique_id=470131012]
+layout_mode = 0
+offset_left = 116.0
+offset_top = 96.0
+offset_right = 117.0
+offset_bottom = 104.0
+color = Color(0.04, 0.04, 0.03, 0.85)
+
+[node name="Notch_3" type="ColorRect" parent="StatusCard" unique_id=700863985]
+layout_mode = 0
+offset_left = 165.0
+offset_top = 96.0
+offset_right = 166.0
+offset_bottom = 104.0
+color = Color(0.04, 0.04, 0.03, 0.85)
+
+[node name="FuelPercent" type="Label" parent="StatusCard" unique_id=1477337053]
+layout_mode = 0
+offset_left = 224.0
+offset_top = 92.0
+offset_right = 324.0
+offset_bottom = 115.0
+theme_override_font_sizes/font_size = 12
+theme_override_colors/font_color = Color(0.9411765, 0.9019608, 0.72156864, 1)
+text = "100%"
+
+[node name="ToastContainer" type="Control" parent="StatusCard" unique_id=885767823]
+modulate = Color(1, 1, 1, 0)
+anchors_preset = 0
+offset_top = -20.0
+offset_bottom = -20.0
+
+[node name="ToastBg" type="ColorRect" parent="StatusCard/ToastContainer" unique_id=617049232]
+layout_mode = 0
+offset_left = 18.0
+offset_top = 144.0
+offset_right = 324.0
+offset_bottom = 168.0
+color = Color(0.06, 0.05, 0.03, 0.88)
+
+[node name="ToastLabel" type="Label" parent="StatusCard/ToastContainer" unique_id=571312248]
+layout_mode = 0
+offset_left = 26.0
+offset_top = 148.0
+offset_right = 316.0
+offset_bottom = 171.0
+theme_override_font_sizes/font_size = 10
+theme_override_colors/font_color = Color(0.95686275, 0.69803923, 0.21960784, 1)

@@ -1,0 +1,52 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/troffer_fixture.gd" id="1_hkmp1"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_cbjti"]
+albedo_color = Color(0.43137255, 0.42352942, 0.38431373, 1)
+roughness = 0.52
+
+[sub_resource type="BoxMesh" id="BoxMesh_iaqhy"]
+material = SubResource("StandardMaterial3D_cbjti")
+size = Vector3(2.2, 0.02, 0.65)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_rh8up"]
+albedo_color = Color(0.92156863, 0.9411765, 0.79607844, 1)
+roughness = 0.85
+emission_enabled = true
+emission = Color(0.92156863, 0.9411765, 0.79607844, 1)
+emission_energy_multiplier = 1.45
+
+[sub_resource type="BoxMesh" id="BoxMesh_42uuy"]
+material = SubResource("StandardMaterial3D_rh8up")
+size = Vector3(2.12, 0.025, 0.57)
+
+[node name="TrofferFixture" type="Node3D" unique_id=918309237]
+script = ExtResource("1_hkmp1")
+
+[node name="Frame" type="MeshInstance3D" parent="." unique_id=184775605]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.005, 0)
+mesh = SubResource("BoxMesh_iaqhy")
+
+[node name="Panel" type="MeshInstance3D" parent="." unique_id=1935384241]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.012, 0)
+mesh = SubResource("BoxMesh_42uuy")
+
+[node name="SpotLight" type="SpotLight3D" parent="." unique_id=156935163]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, -0.05, 0)
+light_color = Color(0.92156863, 0.9411765, 0.79607844, 1)
+light_energy = 1.42
+light_volumetric_fog_energy = 1.35
+shadow_enabled = true
+shadow_bias = 0.04
+shadow_blur = 4.2
+spot_range = 9.5
+spot_attenuation = 0.92
+spot_angle = 84.0
+
+[node name="FillLight" type="OmniLight3D" parent="." unique_id=1164502213]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.22, 0)
+light_color = Color(0.92156863, 0.9411765, 0.79607844, 1)
+light_energy = 0.68
+omni_range = 5.8
+omni_attenuation = 1.42

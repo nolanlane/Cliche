@@ -1,6 +1,62 @@
-[gd_scene format=3 uid="uid://bk7uxl8be40bn"]
+[gd_scene format=3]
 
-[ext_resource type="Script" uid="uid://dn1c0mpyebd3k" path="res://main.gd" id="1_main"]
+[ext_resource type="Script" path="res://main.gd" id="1_qgr7l"]
+[ext_resource type="Environment" path="res://environment.tres" id="2_2hliv"]
+[ext_resource type="PackedScene" path="res://scenes/sectors/shell.tscn" id="3_kvxd8"]
+[ext_resource type="PackedScene" path="res://scenes/sectors/reception.tscn" id="4_tw4mc"]
+[ext_resource type="PackedScene" path="res://scenes/sectors/north_corridors.tscn" id="5_jobmg"]
+[ext_resource type="PackedScene" path="res://scenes/sectors/pillar_forest.tscn" id="6_icw8d"]
+[ext_resource type="PackedScene" path="res://scenes/sectors/crawlspace.tscn" id="7_2d6cj"]
+[ext_resource type="PackedScene" path="res://scenes/sectors/sump.tscn" id="8_6su21"]
+[ext_resource type="PackedScene" path="res://scenes/sectors/hallway_to_nowhere.tscn" id="9_x34sa"]
+[ext_resource type="PackedScene" path="res://scenes/sectors/archive.tscn" id="10_1t165"]
+[ext_resource type="PackedScene" path="res://scenes/gameplay/player.tscn" id="11_yjbpb"]
+[ext_resource type="Script" path="res://player.gd" id="12_if7di"]
+[ext_resource type="PackedScene" path="res://scenes/gameplay/observer.tscn" id="13_0n7bm"]
+[ext_resource type="PackedScene" path="res://scenes/gameplay/hud.tscn" id="14_aa0x2"]
 
-[node name="Cliche" type="Node3D" unique_id=864116088]
-script = ExtResource("1_main")
+[sub_resource type="AudioStreamGenerator" id="AudioStreamGenerator_4xq1u"]
+mix_rate = 22050.0
+buffer_length = 0.2
+
+[node name="Cliche" type="Node3D" unique_id=114525613]
+script = ExtResource("1_qgr7l")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=223289135]
+environment = ExtResource("2_2hliv")
+
+[node name="Level" type="Node3D" parent="." unique_id=901921887]
+
+[node name="Shell" type="Node3D" parent="Level" unique_id=1348028308 instance=ExtResource("3_kvxd8")]
+
+[node name="Reception" type="Node3D" parent="Level" unique_id=1326827790 instance=ExtResource("4_tw4mc")]
+
+[node name="NorthCorridors" type="Node3D" parent="Level" unique_id=1870750736 instance=ExtResource("5_jobmg")]
+
+[node name="PillarForest" type="Node3D" parent="Level" unique_id=902705468 instance=ExtResource("6_icw8d")]
+
+[node name="Crawlspace" type="Node3D" parent="Level" unique_id=1488659151 instance=ExtResource("7_2d6cj")]
+
+[node name="Sump" type="Node3D" parent="Level" unique_id=1060739763 instance=ExtResource("8_6su21")]
+
+[node name="HallwayToNowhere" type="Node3D" parent="Level" unique_id=192670565 instance=ExtResource("9_x34sa")]
+
+[node name="Archive" type="Node3D" parent="Level" unique_id=285143524 instance=ExtResource("10_1t165")]
+
+[node name="Gameplay" type="Node3D" parent="." unique_id=2062163145]
+
+[node name="Player" type="CharacterBody3D" parent="Gameplay" unique_id=152004192 instance=ExtResource("11_yjbpb")]
+transform = Transform3D(0.99026805, 0, 0.1391731, 0, 1, 0, -0.1391731, 0, 0.99026805, 1.2, 0.05, 3.2)
+script = ExtResource("12_if7di")
+
+[node name="Observer" type="Node3D" parent="Gameplay" unique_id=1532735031 instance=ExtResource("13_0n7bm")]
+visible = false
+
+[node name="Atmosphere" type="Node3D" parent="." unique_id=1312810658]
+
+[node name="AmbientHumPlayer" type="AudioStreamPlayer" parent="Atmosphere" unique_id=1503633111]
+stream = SubResource("AudioStreamGenerator_4xq1u")
+volume_db = -16.0
+autoplay = true
+
+[node name="HUD" type="CanvasLayer" parent="." unique_id=830624039 instance=ExtResource("14_aa0x2")]
