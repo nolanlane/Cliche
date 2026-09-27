@@ -124,6 +124,7 @@ var observer_pressure := 0.0
 var observer_shock := 0.0
 var observer_stagger := 0.0
 var observer_shock_phase := 0.0
+var observer_capture_lock := 0.0
 
 func _ready() -> void:
 	add_to_group("player")
@@ -574,7 +575,7 @@ func _fill_lighter_audio() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and observer_capture_lock <= 0.0:
 		rotate_y(-event.relative.x * mouse_sensitivity)
 		pitch = clamp(pitch - event.relative.y * mouse_sensitivity, deg_to_rad(-82.0), deg_to_rad(82.0))
 		camera.rotation.x = pitch
@@ -792,6 +793,11 @@ func add_fuel(amount: float) -> void:
 func set_observer_pressure(amount: float) -> void:
 	observer_pressure = clampf(amount, 0.0, 1.0)
 
+func set_observer_capture(duration: float) -> void:
+	observer_capture_lock = maxf(observer_capture_lock, duration)
+	velocity.x = 0.0
+	velocity.z = 0.0
+
 func apply_observer_strike(severity: float, away_direction: Vector3) -> void:
 	observer_shock = maxf(observer_shock, clampf(0.75 + severity * 0.45, 0.0, 1.25))
 	observer_stagger = maxf(observer_stagger, clampf(0.65 + severity * 0.40, 0.0, 1.0))
@@ -810,6 +816,7 @@ func reset_after_observer_collapse(safe_position: Vector3) -> void:
 	unequip_lighter()
 
 func _physics_process(delta: float) -> void:
+	observer_capture_lock = move_toward(observer_capture_lock, 0.0, delta)
 	var on_floor := is_on_floor()
 
 	# Landing impact detection
@@ -848,10 +855,14 @@ func _physics_process(delta: float) -> void:
 		if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
 			ky += 1.0
 		input_2d = Vector2(kx, ky).normalized()
+	if observer_capture_lock > 0.0:
+		input_2d = Vector2.ZERO
 	var move_direction := (transform.basis * Vector3(input_2d.x, 0.0, input_2d.y)).normalized()
 
 	# Determine speed
 	var wants_sprint := (Input.is_action_pressed("sprint") or Input.is_key_pressed(KEY_SHIFT)) and not is_crouching
+	if observer_capture_lock > 0.0:
+		wants_sprint = false
 	var target_speed := walk_speed
 	if is_crouching:
 		target_speed = crouch_speed

@@ -43,7 +43,10 @@ var void_material: StandardMaterial3D
 var cable_material: StandardMaterial3D
 var tile_face_material: StandardMaterial3D
 var tile_core_material: StandardMaterial3D
-var observer_material: StandardMaterial3D
+var observer_material: ShaderMaterial
+var observer_head_material: StandardMaterial3D
+var observer_hand_material: StandardMaterial3D
+var observer_detail_material: StandardMaterial3D
 var door_material: StandardMaterial3D
 var door_recess_material: StandardMaterial3D
 var architectural_metal_material: StandardMaterial3D
@@ -62,7 +65,7 @@ var elapsed := 0.0
 # The Observer begins as a doubtful background presence, then remembers how the
 # player reacts and selectively escalates. State changes remain director-owned so
 # appearance, pressure, pursuit, and recovery cannot overlap or spam the player.
-enum ObserverState { DORMANT, OBSERVING, MANIFESTED, PRESSURE, PURSUIT, DISENGAGING, RECOVERY }
+enum ObserverState { DORMANT, OBSERVING, MANIFESTED, PRESSURE, PURSUIT, CAPTURE, DISENGAGING, RECOVERY }
 
 var observer: Node3D
 var observer_markers: Array[Vector3] = []
@@ -100,6 +103,15 @@ var observer_learned_flight := 0.0
 var observer_audio_phase := 0.0
 var observer_visited_sectors: Dictionary = {}
 var observer_debug_forced := false
+var observer_last_distance := 64.0
+var observer_last_view_dot := -1.0
+var observer_has_sight := false
+var observer_exposure_signal := 0.0
+var observer_proximity_signal := 0.0
+var observer_screen_threat := 0.0
+var observer_capture_timer := 0.0
+var observer_capture_phase := 0.0
+var observer_capture_pending_reset := false
 var hud_atmosphere_material: ShaderMaterial
 
 # Procedural fluorescent audio
@@ -494,14 +506,54 @@ func _make_materials() -> void:
 	tile_core_material.roughness = 1.0
 	tile_core_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 
-	observer_material = StandardMaterial3D.new()
-	# Alpha-hashed, light-reactive charcoal lets the figure break up in haze instead of
-	# reading as a hard black cardboard cutout.
-	observer_material.albedo_color = Color(0.008, 0.009, 0.006, 0.34)
-	observer_material.roughness = 1.0
-	observer_material.metallic = 0.0
-	observer_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_HASH
-	observer_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# The Observer is deliberately opaque and very dark rather than a uniformly
+	# transparent primitive. Its silhouette is authored from tapered forms below;
+	# this shader lets fluorescent spill and a faint fabric edge keep it readable.
+	var observer_suit_shader := Shader.new()
+	observer_suit_shader.code = """
+shader_type spatial;
+render_mode cull_disabled, diffuse_burley, specular_schlick_ggx;
+uniform float presence : hint_range(0.0, 1.0) = 0.0;
+uniform float threat : hint_range(0.0, 1.0) = 0.0;
+
+void fragment() {
+	float weave_a = sin(UV.x * 96.0 + UV.y * 11.0);
+	float weave_b = sin(UV.y * 118.0 - UV.x * 17.0);
+	float weave = (weave_a + weave_b) * 0.5;
+	float edge = pow(1.0 - max(dot(normalize(NORMAL), normalize(VIEW)), 0.0), 2.4);
+	vec3 cloth = vec3(0.0065, 0.0080, 0.0090) + vec3(0.0020, 0.0024, 0.0028) * weave;
+	cloth += edge * vec3(0.010, 0.013, 0.015) * (0.75 + presence * 0.9);
+	ALBEDO = max(cloth, vec3(0.001));
+	ROUGHNESS = 0.79 - edge * 0.16;
+	METALLIC = 0.06;
+	EMISSION = vec3(0.0012, 0.0018, 0.0020) * (0.35 + edge * 1.6 + threat * 0.35);
+}
+"""
+	observer_material = ShaderMaterial.new()
+	observer_material.shader = observer_suit_shader
+
+	observer_head_material = StandardMaterial3D.new()
+	# A desaturated, almost wax-pale head catches a hard fluorescent edge without
+	# adding eyes or mouth; the absence of features does the readable work.
+	observer_head_material.albedo_color = Color(0.48, 0.50, 0.47, 1.0)
+	observer_head_material.roughness = 0.58
+	observer_head_material.metallic = 0.02
+	observer_head_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	observer_head_material.emission_enabled = true
+	observer_head_material.emission = Color(0.012, 0.014, 0.012)
+	observer_head_material.emission_energy_multiplier = 0.18
+
+	observer_hand_material = StandardMaterial3D.new()
+	observer_hand_material.albedo_color = Color(0.14, 0.16, 0.15, 1.0)
+	observer_hand_material.roughness = 0.74
+	observer_hand_material.metallic = 0.0
+	observer_hand_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+	observer_detail_material = StandardMaterial3D.new()
+	observer_detail_material.albedo_color = Color(0.0035, 0.0040, 0.0042, 1.0)
+	observer_detail_material.roughness = 0.64
+	observer_detail_material.metallic = 0.12
+	observer_detail_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 
 	# Institutional millwork used sparingly at sealed service doors and sector thresholds.
 	door_material = StandardMaterial3D.new()
@@ -2073,67 +2125,70 @@ func _build_observer_presence() -> void:
 	observer = Node3D.new()
 	observer.name = "DistantObserver"
 
-	# A slightly stooped, asymmetrical human outline. Rounded low-poly forms catch only
-	# fragments of the room light, while the coat hides enough anatomy to stay uncertain.
+	# The figure is assembled from authored tapered meshes rather than a stack of
+	# obvious primitives. A narrow coat, long segmented limbs, a blank pale head,
+	# and small asymmetries make the silhouette legible at a glance but never toy-like.
 	var stance := Node3D.new()
 	stance.name = "Stance"
 	stance.rotation_degrees.z = -1.15
 	observer.add_child(stance)
 
-	var coat_mesh := CylinderMesh.new()
-	coat_mesh.top_radius = 0.225
-	coat_mesh.bottom_radius = 0.315
-	coat_mesh.height = 1.08
-	coat_mesh.radial_segments = 12
-	_add_observer_part(stance, "Coat", coat_mesh, Vector3(-0.015, 0.83, 0.0), Vector3(0.0, 0.0, 0.8), Vector3(1.0, 1.0, 0.72))
+	var coat_mesh := _make_observer_coat_mesh()
+	_add_observer_part(stance, "Coat", coat_mesh, Vector3(-0.018, 0.08, 0.0), Vector3(0.0, 0.0, 0.8), Vector3(1.0, 1.0, 0.82))
 
-	var torso_mesh := CapsuleMesh.new()
-	torso_mesh.radius = 0.255
-	torso_mesh.height = 1.12
-	torso_mesh.radial_segments = 12
-	torso_mesh.rings = 5
-	_add_observer_part(stance, "Torso", torso_mesh, Vector3(0.0, 1.42, 0.0), Vector3(4.0, 0.0, -1.6), Vector3(0.94, 1.0, 0.64))
+	var tail_mesh := _make_observer_tapered_mesh(0.94, 0.16, 0.085, 9)
+	_add_observer_part(stance, "CoatTail_L", tail_mesh, Vector3(-0.115, 0.46, 0.115), Vector3(1.5, 0.0, -4.5), Vector3(0.82, 1.0, 0.46))
+	_add_observer_part(stance, "CoatTail_R", tail_mesh, Vector3(0.100, 0.43, 0.105), Vector3(-1.0, 0.0, 5.0), Vector3(0.76, 1.0, 0.42))
 
-	var shoulder_mesh := CapsuleMesh.new()
-	shoulder_mesh.radius = 0.105
-	shoulder_mesh.height = 0.84
-	shoulder_mesh.radial_segments = 12
-	shoulder_mesh.rings = 4
-	_add_observer_part(stance, "Shoulders", shoulder_mesh, Vector3(-0.01, 1.84, 0.0), Vector3(0.0, 0.0, 91.5), Vector3(1.0, 1.0, 0.75))
+	var pelvis_mesh := _make_observer_tapered_mesh(0.42, 0.23, 0.17, 10)
+	_add_observer_part(stance, "Pelvis", pelvis_mesh, Vector3(-0.012, 0.86, 0.0), Vector3(0.0, 0.0, -2.2), Vector3(0.86, 1.0, 0.70))
 
-	var hood_mesh := SphereMesh.new()
-	hood_mesh.radius = 0.215
-	hood_mesh.height = 0.47
-	hood_mesh.radial_segments = 14
-	hood_mesh.rings = 7
-	_add_observer_part(stance, "Hood", hood_mesh, Vector3(-0.035, 2.16, -0.018), Vector3(-7.0, 5.0, -2.5), Vector3(0.88, 1.0, 0.80))
+	var torso_mesh := _make_observer_tapered_mesh(0.88, 0.19, 0.125, 10)
+	_add_observer_part(stance, "Torso", torso_mesh, Vector3(0.0, 1.19, -0.012), Vector3(3.0, 0.0, -1.7), Vector3(0.94, 1.0, 0.72))
 
-	# Segmented limbs avoid the toy-like straight rods of the old figure. The unequal
-	# angles are readable as a person at a glance but resist a clean mannequin silhouette.
+	var shoulder_mesh := _make_observer_tapered_mesh(0.42, 0.105, 0.072, 9)
+	_add_observer_part(stance, "Shoulders", shoulder_mesh, Vector3(-0.008, 1.82, 0.0), Vector3(0.0, 0.0, 91.5), Vector3(0.92, 1.0, 0.62))
+
+	var collar_mesh := BoxMesh.new()
+	collar_mesh.size = Vector3(0.30, 0.06, 0.18)
+	_add_observer_part(stance, "Collar", collar_mesh, Vector3(-0.01, 1.84, -0.055), Vector3(0.0, 0.0, -1.0), Vector3(1.0, 1.0, 0.82), observer_detail_material)
+	var tie_mesh := _make_observer_tapered_mesh(0.42, 0.048, 0.018, 6)
+	_add_observer_part(stance, "Tie", tie_mesh, Vector3(-0.035, 1.46, -0.14), Vector3(1.0, 0.0, 0.0), Vector3(0.70, 1.0, 0.46), observer_detail_material)
+
+	var neck_mesh := _make_observer_tapered_mesh(0.22, 0.078, 0.070, 9)
+	_add_observer_part(stance, "Neck", neck_mesh, Vector3(-0.02, 2.02, 0.0), Vector3(0.0, 0.0, -2.0), Vector3(0.80, 1.0, 0.72))
+
+	var head_mesh := SphereMesh.new()
+	head_mesh.radius = 0.215
+	head_mesh.height = 0.49
+	head_mesh.radial_segments = 24
+	head_mesh.rings = 12
+	_add_observer_part(stance, "Head", head_mesh, Vector3(-0.045, 2.27, -0.025), Vector3(-7.0, 5.0, -2.5), Vector3(0.76, 1.16, 0.70), observer_head_material)
+
+	# Unequal limb angles and long hands keep the figure human-readable in silhouette
+	# while a few tapered fingers break the rigid mannequin read at close range.
 	for side in [-1.0, 1.0]:
 		var side_name := "L" if side < 0.0 else "R"
-		var upper_arm_mesh := CylinderMesh.new()
-		upper_arm_mesh.top_radius = 0.060
-		upper_arm_mesh.bottom_radius = 0.072
-		upper_arm_mesh.height = 0.64 if side < 0.0 else 0.61
-		upper_arm_mesh.radial_segments = 10
+		var upper_arm_mesh := _make_observer_tapered_mesh(0.68 if side < 0.0 else 0.63, 0.072, 0.050, 9)
 		var upper_angle := -7.0 if side < 0.0 else 10.0
-		_add_observer_part(stance, "UpperArm_" + side_name, upper_arm_mesh, Vector3(side * 0.30, 1.53 if side < 0.0 else 1.50, 0.005), Vector3(1.5, 0.0, side * upper_angle), Vector3(1.0, 1.0, 0.82))
+		_add_observer_part(stance, "UpperArm_" + side_name, upper_arm_mesh, Vector3(side * 0.31, 1.51 if side < 0.0 else 1.49, 0.005), Vector3(1.5, 0.0, side * upper_angle), Vector3(0.90, 1.0, 0.82))
 
-		var forearm_mesh := CylinderMesh.new()
-		forearm_mesh.top_radius = 0.045
-		forearm_mesh.bottom_radius = 0.060
-		forearm_mesh.height = 0.59
-		forearm_mesh.radial_segments = 10
+		var forearm_mesh := _make_observer_tapered_mesh(0.66, 0.058, 0.040, 9)
 		var forearm_angle := 4.0 if side < 0.0 else -7.0
-		_add_observer_part(stance, "Forearm_" + side_name, forearm_mesh, Vector3(side * 0.345, 0.96 if side < 0.0 else 0.94, 0.025), Vector3(-2.0, 0.0, side * forearm_angle), Vector3(1.0, 1.0, 0.78))
+		_add_observer_part(stance, "Forearm_" + side_name, forearm_mesh, Vector3(side * 0.345, 0.94 if side < 0.0 else 0.92, 0.025), Vector3(-2.0, 0.0, side * forearm_angle), Vector3(0.92, 1.0, 0.78))
 
-		var leg_mesh := CylinderMesh.new()
-		leg_mesh.top_radius = 0.080
-		leg_mesh.bottom_radius = 0.062
-		leg_mesh.height = 0.79
-		leg_mesh.radial_segments = 10
-		_add_observer_part(stance, "Leg_" + side_name, leg_mesh, Vector3(side * 0.105, 0.39, 0.0), Vector3(0.0, 0.0, side * -1.8), Vector3(1.0, 1.0, 0.84))
+		var hand_mesh := _make_observer_tapered_mesh(0.28 if side < 0.0 else 0.32, 0.062, 0.040, 8)
+		_add_observer_part(stance, "Hand_" + side_name, hand_mesh, Vector3(side * 0.36, 0.60 if side < 0.0 else 0.57, 0.035), Vector3(-5.0, 0.0, side * (3.0 if side < 0.0 else -5.5)), Vector3(0.92, 1.0, 0.70), observer_hand_material)
+		for finger_index in range(3):
+			var finger_mesh := _make_observer_tapered_mesh(0.17 + finger_index * 0.018, 0.018, 0.009, 6)
+			var finger_x: float = side * (0.36 + (finger_index - 1) * 0.035)
+			_add_observer_part(stance, "Finger_%s_%s" % [side_name, finger_index], finger_mesh, Vector3(finger_x, 0.43 - finger_index * 0.012, 0.035 + finger_index * 0.012), Vector3(-3.0, 0.0, side * (2.0 + finger_index * 2.0)), Vector3(0.72, 1.0, 0.62), observer_hand_material)
+
+		var leg_mesh := _make_observer_tapered_mesh(0.92, 0.082, 0.060, 9)
+		_add_observer_part(stance, "Leg_" + side_name, leg_mesh, Vector3(side * 0.105, 0.40, 0.0), Vector3(0.0, 0.0, side * -1.8), Vector3(0.90, 1.0, 0.82))
+		var shoe_mesh := BoxMesh.new()
+		shoe_mesh.size = Vector3(0.19, 0.075, 0.38)
+		_add_observer_part(stance, "Shoe_" + side_name, shoe_mesh, Vector3(side * 0.11, 0.055, -0.045 if side < 0.0 else 0.015), Vector3(0.0, side * 3.0, side * -1.0), Vector3(1.0, 1.0, 0.92), observer_detail_material)
 
 	observer.position = observer_markers[0]
 	observer.visible = false
@@ -2145,15 +2200,78 @@ func _build_observer_presence() -> void:
 	_set_observer_state(ObserverState.DORMANT, observer_hide_timer)
 	_update_presence_shader()
 
-func _add_observer_part(parent: Node3D, part_name: String, mesh: PrimitiveMesh, part_position: Vector3, part_rotation: Vector3 = Vector3.ZERO, part_scale: Vector3 = Vector3.ONE) -> MeshInstance3D:
-	mesh.material = observer_material
+func _make_observer_tapered_mesh(height: float, bottom_radius: float, top_radius: float, sides: int = 9) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var vertices: Array[Vector3] = []
+	var uvs: Array[Vector2] = []
+	for ring_index in range(3):
+		var t := float(ring_index) / 2.0
+		var y := height * t
+		var radius := lerpf(bottom_radius, top_radius, t)
+		for side_index in range(sides):
+			var angle := TAU * float(side_index) / float(sides)
+			vertices.append(Vector3(cos(angle) * radius, y, sin(angle) * radius))
+			uvs.append(Vector2(float(side_index) / float(sides), t))
+	for ring_index in range(2):
+		for side_index in range(sides):
+			var next_side := (side_index + 1) % sides
+			var a := ring_index * sides + side_index
+			var b := ring_index * sides + next_side
+			var c := (ring_index + 1) * sides + next_side
+			var d := (ring_index + 1) * sides + side_index
+			for vertex_index in [a, b, c, a, c, d]:
+				st.set_uv(uvs[vertex_index])
+				st.add_vertex(vertices[vertex_index])
+	st.index()
+	st.generate_normals()
+	return st.commit()
+
+func _make_observer_coat_mesh() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var rings: Array = [
+		[0.00, 0.34, 0.22, 0.00, 0.00],
+		[0.14, 0.33, 0.22, -0.01, 0.00],
+		[0.58, 0.27, 0.19, -0.01, -0.01],
+		[0.96, 0.215, 0.17, 0.00, -0.01],
+		[1.25, 0.17, 0.145, -0.015, 0.00]
+	]
+	var sides := 10
+	var vertices: Array[Vector3] = []
+	var uvs: Array[Vector2] = []
+	for ring_index in range(rings.size()):
+		var ring: Array = rings[ring_index]
+		var y: float = ring[0]
+		var radius_x: float = ring[1]
+		var radius_z: float = ring[2]
+		for side_index in range(sides):
+			var angle := TAU * float(side_index) / float(sides) + 0.08 * sin(float(ring_index) * 1.7)
+			vertices.append(Vector3(ring[3] + cos(angle) * radius_x, y, ring[4] + sin(angle) * radius_z))
+			uvs.append(Vector2(float(side_index) / float(sides), float(ring_index) / float(rings.size() - 1)))
+	for ring_index in range(rings.size() - 1):
+		for side_index in range(sides):
+			var next_side := (side_index + 1) % sides
+			var a := ring_index * sides + side_index
+			var b := ring_index * sides + next_side
+			var c := (ring_index + 1) * sides + next_side
+			var d := (ring_index + 1) * sides + side_index
+			for vertex_index in [a, b, c, a, c, d]:
+				st.set_uv(uvs[vertex_index])
+				st.add_vertex(vertices[vertex_index])
+	st.index()
+	st.generate_normals()
+	return st.commit()
+
+func _add_observer_part(parent: Node3D, part_name: String, mesh: Mesh, part_position: Vector3, part_rotation: Vector3 = Vector3.ZERO, part_scale: Vector3 = Vector3.ONE, material: Material = null) -> MeshInstance3D:
 	var part := MeshInstance3D.new()
 	part.name = part_name
 	part.mesh = mesh
+	part.material_override = observer_material if material == null else material
 	part.position = part_position
 	part.rotation_degrees = part_rotation
 	part.scale = part_scale
-	part.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	part.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	part.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 	parent.add_child(part)
 	return part
@@ -2171,13 +2289,25 @@ func _update_observer_presence(delta: float) -> void:
 	observer_attack_cooldown = maxf(0.0, observer_attack_cooldown - delta)
 	observer_feedback = move_toward(observer_feedback, _observer_feedback_target(), delta * 0.85)
 	observer_dread = clampf(observer_dread - delta * (0.012 if observer_state in [ObserverState.DORMANT, ObserverState.RECOVERY] else 0.002), 0.0, 1.0)
+	if observer_state not in [ObserverState.MANIFESTED, ObserverState.PRESSURE, ObserverState.PURSUIT, ObserverState.CAPTURE]:
+		observer_exposure_signal = move_toward(observer_exposure_signal, 0.0, delta * 0.78)
+		observer_proximity_signal = move_toward(observer_proximity_signal, 0.0, delta * 0.54)
+	if observer_state != ObserverState.CAPTURE:
+		observer_screen_threat = clampf(observer_feedback * 0.52 + observer_exposure_signal * 0.58 + observer_proximity_signal * 0.24 + observer_dread * 0.28, 0.0, 1.0)
 	if observer_state in [ObserverState.DORMANT, ObserverState.RECOVERY]:
 		observer_composure = minf(1.0, observer_composure + delta * 0.016)
 
 	var stance := observer.get_node_or_null("Stance") as Node3D
 	if stance != null:
 		var drift_scale := 0.42 if observer_state == ObserverState.PURSUIT else 1.0
-		stance.rotation_degrees.z = -1.15 + sin(elapsed * 0.23 + observer_sway_phase) * 0.16 * drift_scale
+		if observer_state == ObserverState.CAPTURE:
+			stance.rotation_degrees.z = -2.0 + sin(observer_capture_phase * 14.0) * 1.8
+			stance.position.x = sin(observer_capture_phase * 9.0) * 0.018
+			stance.scale = Vector3.ONE * (1.0 + sin(observer_capture_phase * 11.0) * 0.018)
+		else:
+			stance.rotation_degrees.z = -1.15 + sin(elapsed * 0.23 + observer_sway_phase) * 0.16 * drift_scale
+			stance.position.x = sin(elapsed * 0.37 + observer_sway_phase) * 0.006 * drift_scale
+			stance.scale = Vector3.ONE
 
 	match observer_state:
 		ObserverState.DORMANT:
@@ -2190,13 +2320,15 @@ func _update_observer_presence(delta: float) -> void:
 			_update_observer_pressure(delta, camera_node)
 		ObserverState.PURSUIT:
 			_update_observer_pursuit(delta, camera_node)
+		ObserverState.CAPTURE:
+			_update_observer_capture(delta, camera_node)
 		ObserverState.DISENGAGING:
 			_update_observer_disengaging(delta)
 		ObserverState.RECOVERY:
 			_update_observer_recovery()
 
 	if player.has_method("set_observer_pressure"):
-		player.set_observer_pressure(clampf(maxf(observer_feedback * 0.82, observer_dread * 0.55), 0.0, 1.0))
+		player.set_observer_pressure(clampf(maxf(observer_feedback * 0.82, maxf(observer_dread * 0.55, observer_screen_threat * 0.72)), 0.0, 1.0))
 	_update_presence_shader()
 
 func _update_observer_memory(delta: float) -> void:
@@ -2257,6 +2389,8 @@ func _observer_feedback_target() -> float:
 			return 0.42 + observer_escalation * 0.22
 		ObserverState.PURSUIT:
 			return 0.78 + observer_attack_charge * 0.16
+		ObserverState.CAPTURE:
+			return 1.0
 		ObserverState.DISENGAGING:
 			return 0.24
 		_:
@@ -2344,7 +2478,12 @@ func _update_observer_pressure(delta: float, camera_node: Camera3D) -> void:
 	var view_dot: float = sight["dot"]
 	var has_sight := int(sight["samples"]) > 0 and view_dot > 0.50
 	_update_observer_exposure(delta, has_sight, view_dot, distance)
-	observer_dread = clampf(observer_dread + delta * (0.018 + observer_presence * 0.018), 0.0, 1.0)
+	if has_sight:
+		observer_dread = clampf(observer_dread + delta * (0.018 + observer_presence * 0.018), 0.0, 1.0)
+	else:
+		# Breaking gaze lets the visual signal breathe out. A close pressure encounter
+		# leaves a small residual floor, but it no longer pins the screen at full danger.
+		observer_dread = move_toward(observer_dread, 0.24 if distance < 12.0 else 0.0, delta * 0.045)
 	observer_presence = move_toward(observer_presence, 0.58 if has_sight else 0.24, delta * 0.75)
 
 	if distance < 9.5 or observer_centered_time > 2.1 or observer_exposure_time > 5.5:
@@ -2389,7 +2528,10 @@ func _update_observer_pursuit(delta: float, camera_node: Camera3D) -> void:
 	var centered := player_has_sight and view_dot > 0.965
 	var walk_clear := _observer_has_walk_path(observer.global_position, player.global_position)
 	observer_presence = move_toward(observer_presence, 1.0, delta * 1.2)
-	observer_dread = clampf(observer_dread + delta * 0.035, 0.0, 1.0)
+	if player_has_sight:
+		observer_dread = clampf(observer_dread + delta * 0.035, 0.0, 1.0)
+	else:
+		observer_dread = move_toward(observer_dread, 0.34, delta * 0.055)
 
 	if absf(observer.global_position.y - player.global_position.y) < 1.45 and walk_clear and distance > 1.75:
 		var speed := lerpf(2.05, 3.35, observer_escalation)
@@ -2431,7 +2573,42 @@ func _update_observer_pursuit(delta: float, camera_node: Camera3D) -> void:
 	if observer_escape_time > 3.8 or distance > 27.0 or observer_state_timer <= 0.0:
 		_begin_observer_disengage()
 
+func _update_observer_capture(delta: float, camera_node: Camera3D) -> void:
+	observer_capture_phase += delta
+	observer_capture_timer -= delta
+	observer.visible = true
+	observer_presence = 1.0
+	observer_dread = 1.0
+	observer_screen_threat = 1.0
+	# Keep the face just beyond the player's personal space. The figure is not
+	# animated like an NPC; it drifts in and out of coherence as the image fails.
+	var forward := -camera_node.global_transform.basis.z
+	var capture_distance := lerpf(2.75, 1.45, clampf(1.0 - observer_capture_timer / 1.65, 0.0, 1.0))
+	var target_position := camera_node.global_position + forward * capture_distance
+	target_position.y = player.global_position.y + 0.012
+	observer.global_position = target_position
+	observer.look_at(camera_node.global_position + Vector3.UP * 0.08, Vector3.UP)
+	if player.has_method("set_observer_capture"):
+		player.set_observer_capture(maxf(observer_capture_timer, 0.0))
+	if observer_capture_timer <= 0.0:
+		observer.visible = false
+		if observer_capture_pending_reset and player.has_method("reset_after_observer_collapse"):
+			player.reset_after_observer_collapse(observer_safe_position)
+		observer_capture_pending_reset = false
+		_set_observer_state(ObserverState.RECOVERY, randf_range(44.0, 58.0))
+
 func _update_observer_exposure(delta: float, has_sight: bool, view_dot: float, distance: float) -> void:
+	observer_last_distance = distance
+	observer_last_view_dot = view_dot
+	observer_has_sight = has_sight
+	var distance_pressure := clampf(1.0 - (distance - 3.0) / 34.0, 0.0, 1.0)
+	var centered_pressure := smoothstep(0.58, 0.985, view_dot)
+	var target_exposure := 0.0
+	if has_sight:
+		target_exposure = clampf(distance_pressure * 0.40 + centered_pressure * 0.60, 0.0, 1.0)
+	observer_exposure_signal = move_toward(observer_exposure_signal, target_exposure, delta * (4.4 if target_exposure > observer_exposure_signal else 0.68))
+	observer_proximity_signal = move_toward(observer_proximity_signal, clampf(1.0 - distance / 18.0, 0.0, 1.0), delta * (2.8 if has_sight else 0.42))
+	observer_screen_threat = clampf(observer_feedback * 0.52 + observer_exposure_signal * 0.58 + observer_proximity_signal * 0.24 + observer_dread * 0.28, 0.0, 1.0)
 	if has_sight:
 		observer_unseen_time = 0.0
 		if view_dot > 0.88:
@@ -2463,10 +2640,16 @@ func _observer_attack_player() -> void:
 	observer_escalation = clampf(observer_escalation + 0.08, 0.0, 1.0)
 	observer_dread = 1.0
 	if observer_composure <= 0.05:
-		if player.has_method("reset_after_observer_collapse"):
-			player.reset_after_observer_collapse(observer_safe_position)
+		# Full danger gets a short, coherent culmination before the safety reset. The
+		# figure closes the distance inside the failing image instead of cutting to a
+		# long scripted jumpscare.
+		observer_capture_timer = 1.65
+		observer_capture_phase = 0.0
+		observer_capture_pending_reset = true
 		observer_composure = 0.48
-		_set_observer_state(ObserverState.RECOVERY, randf_range(44.0, 58.0))
+		_set_observer_state(ObserverState.CAPTURE, 1.65)
+		if player.has_method("set_observer_capture"):
+			player.set_observer_capture(observer_capture_timer)
 	else:
 		_set_observer_state(ObserverState.RECOVERY, randf_range(28.0, 40.0))
 
@@ -2499,6 +2682,9 @@ func _set_observer_state(next_state: ObserverState, duration: float) -> void:
 		observer_attack_charge = 0.0
 	if next_state == ObserverState.RECOVERY:
 		observer.visible = false
+		observer_capture_timer = 0.0
+		observer_capture_phase = 0.0
+		observer_capture_pending_reset = false
 		observer_seen_time = 0.0
 		observer_centered_time = 0.0
 		observer_exposure_time = 0.0
@@ -2524,6 +2710,10 @@ func _place_observer_for_state(min_distance: float, max_distance: float, prefer_
 	var best_index := -1
 	var best_score := INF
 	var target_distance := (min_distance + max_distance) * 0.5
+	# Late escalation occasionally breaks the learned rule that the Observer only
+	# appears after the player turns away. It still avoids a centered spawn, keeping
+	# the violation unsettling but fair.
+	var allow_edge_violation := observer_escalation > 0.64 and randf() < (0.035 + observer_escalation * 0.085)
 	for candidate_index in range(observer_markers.size()):
 		if observer_recent_markers.has(candidate_index):
 			continue
@@ -2536,7 +2726,9 @@ func _place_observer_for_state(min_distance: float, max_distance: float, prefer_
 		var sight := _observer_visibility(camera_node, grounded)
 		var view_dot: float = sight["dot"]
 		var samples: int = sight["samples"]
-		if prefer_unseen and view_dot > 0.42 and samples > 0:
+		if prefer_unseen and not allow_edge_violation and view_dot > 0.42 and samples > 0:
+			continue
+		if allow_edge_violation and view_dot > 0.82 and samples > 0:
 			continue
 		var score := absf(distance - target_distance) + randf_range(0.0, 3.5)
 		var role: StringName = observer_marker_roles[candidate_index]
@@ -2584,11 +2776,11 @@ func _observer_grounded_position(candidate: Vector3) -> Vector3:
 		return Vector3.INF
 	var grounded := Vector3(candidate.x, floor_position.y + 0.015, candidate.z)
 	var capsule := CapsuleShape3D.new()
-	capsule.radius = 0.30
-	capsule.height = 2.18
+	capsule.radius = 0.34
+	capsule.height = 2.72
 	var clearance := PhysicsShapeQueryParameters3D.new()
 	clearance.shape = capsule
-	clearance.transform = Transform3D(Basis.IDENTITY, grounded + Vector3(0.0, 1.10, 0.0))
+	clearance.transform = Transform3D(Basis.IDENTITY, grounded + Vector3(0.0, 1.36, 0.0))
 	clearance.collision_mask = 1
 	clearance.exclude = [player.get_rid()] if player != null else []
 	if not space.intersect_shape(clearance, 1).is_empty():
@@ -2596,7 +2788,7 @@ func _observer_grounded_position(candidate: Vector3) -> Vector3:
 	return grounded
 
 func _observer_visibility(camera_node: Camera3D, candidate: Vector3) -> Dictionary:
-	var focus := candidate + Vector3(0.0, 1.38, 0.0)
+	var focus := candidate + Vector3(0.0, 1.56, 0.0)
 	var delta_to := focus - camera_node.global_position
 	var distance := maxf(0.001, delta_to.length())
 	var view_dot := (-camera_node.global_transform.basis.z).dot(delta_to / distance)
@@ -2650,6 +2842,11 @@ func debug_observer_force_state(state_name: String) -> Dictionary:
 		"pursuit":
 			_place_observer_for_state(8.0, 18.0, true)
 			_set_observer_state(ObserverState.PURSUIT, 30.0)
+		"capture":
+			observer_capture_timer = 1.65
+			observer_capture_phase = 0.0
+			observer_capture_pending_reset = false
+			_set_observer_state(ObserverState.CAPTURE, 1.65)
 		"recovery":
 			_set_observer_state(ObserverState.RECOVERY, 30.0)
 		_:
@@ -2673,6 +2870,13 @@ func debug_observer_snapshot() -> Dictionary:
 		"learned_gaze": snappedf(observer_learned_gaze, 0.001),
 		"learned_approach": snappedf(observer_learned_approach, 0.001),
 		"learned_flight": snappedf(observer_learned_flight, 0.001),
+		"screen_threat": snappedf(observer_screen_threat, 0.001),
+		"exposure_signal": snappedf(observer_exposure_signal, 0.001),
+		"proximity_signal": snappedf(observer_proximity_signal, 0.001),
+		"distance": snappedf(observer_last_distance, 0.01),
+		"view_dot": snappedf(observer_last_view_dot, 0.001),
+		"has_sight": observer_has_sight,
+		"capture_timer": snappedf(observer_capture_timer, 0.01),
 		"progression": snappedf(_observer_progression(), 0.001),
 		"observer_position": observer.global_position if observer != null else Vector3.ZERO,
 		"player_position": player.global_position if player != null else Vector3.ZERO
@@ -2680,15 +2884,18 @@ func debug_observer_snapshot() -> Dictionary:
 
 func _update_presence_shader() -> void:
 	if observer_material != null:
-		var alpha := 0.0
-		if observer != null and observer.visible:
-			alpha = 0.25 + observer_presence * 0.20
-			if observer_state == ObserverState.PURSUIT:
-				alpha += 0.10
-		observer_material.albedo_color = Color(0.008, 0.009, 0.006, alpha)
+		observer_material.set_shader_parameter("presence", clampf(observer_presence, 0.0, 1.0))
+		observer_material.set_shader_parameter("threat", clampf(observer_screen_threat, 0.0, 1.0))
+	if observer_head_material != null:
+		observer_head_material.emission_energy_multiplier = lerpf(0.16, 0.34, clampf(observer_screen_threat, 0.0, 1.0))
 	if hud_atmosphere_material != null:
-		hud_atmosphere_material.set_shader_parameter("presence", clampf(observer_presence * 0.08 + observer_feedback * 0.12, 0.0, 0.24))
-		hud_atmosphere_material.set_shader_parameter("danger", observer_feedback)
+		var capture_signal := clampf(observer_capture_timer / 1.65, 0.0, 1.0)
+		hud_atmosphere_material.set_shader_parameter("presence", clampf(observer_presence, 0.0, 1.0))
+		hud_atmosphere_material.set_shader_parameter("danger", clampf(observer_feedback, 0.0, 1.0))
+		hud_atmosphere_material.set_shader_parameter("exposure", clampf(observer_exposure_signal, 0.0, 1.0))
+		hud_atmosphere_material.set_shader_parameter("proximity", clampf(observer_proximity_signal, 0.0, 1.0))
+		hud_atmosphere_material.set_shader_parameter("capture", capture_signal)
+		hud_atmosphere_material.set_shader_parameter("capture_phase", clampf(observer_capture_phase / 1.65, 0.0, 1.0))
 
 func _build_hud() -> void:
 	var layer := CanvasLayer.new()
@@ -2703,23 +2910,62 @@ func _build_hud() -> void:
 
 	var shader := Shader.new()
 	shader.code = """shader_type canvas_item;
-uniform float vignette_intensity : hint_range(0.0, 2.5) = 1.25;
-uniform float vignette_opacity : hint_range(0.0, 1.0) = 0.62;
+uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_linear_mipmap;
+uniform float vignette_intensity : hint_range(0.0, 2.5) = 1.15;
+uniform float vignette_opacity : hint_range(0.0, 1.0) = 0.24;
 uniform float presence : hint_range(0.0, 1.0) = 0.0;
 uniform float danger : hint_range(0.0, 1.0) = 0.0;
+uniform float exposure : hint_range(0.0, 1.0) = 0.0;
+uniform float proximity : hint_range(0.0, 1.0) = 0.0;
+uniform float capture : hint_range(0.0, 1.0) = 0.0;
+uniform float capture_phase : hint_range(0.0, 1.0) = 0.0;
+
 float hash(vec2 p) {
 	return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
+
+float noise_line(float line, float frame) {
+	return hash(vec2(line * 0.71 + 4.0, frame * 1.37 + 9.0));
+}
+
 void fragment() {
-	vec2 uv = UV - 0.5;
-	float dist = length(uv);
-	float v = smoothstep(0.32, 0.76, dist * vignette_intensity);
-	float pulse = pow(max(0.0, sin(TIME * mix(3.6, 7.4, danger))), 8.0) * danger;
-	float grain = (hash(FRAGCOORD.xy + floor(TIME * (24.0 + danger * 18.0))) - 0.5) * (0.018 + presence * 0.025 + danger * 0.035);
-	float scan = (sin(FRAGCOORD.y * 1.7 + TIME * 9.0) * 0.5 + 0.5) * (presence * 0.004 + danger * 0.006);
-	float alpha = clamp(v * (vignette_opacity + danger * 0.10) + abs(grain) + scan + pulse * v * 0.025, 0.0, 0.90);
-	vec3 tint = mix(vec3(0.03, 0.03, 0.02), vec3(0.010, 0.015, 0.008), clamp(presence + danger * 0.22, 0.0, 1.0));
-	COLOR = vec4(tint + max(grain, 0.0) * 0.12, alpha);
+	vec2 uv = SCREEN_UV;
+	vec2 px = SCREEN_PIXEL_SIZE;
+	float threat = clamp(presence * 0.18 + danger * 0.50 + exposure * 0.64 + proximity * 0.32 + capture * 1.15, 0.0, 1.0);
+	float nonlinear = smoothstep(0.025, 0.94, threat);
+	float frame = floor(TIME * (18.0 + threat * 22.0));
+	float line = floor(FRAGCOORD.y);
+	float line_noise = noise_line(line, frame);
+	float tear_gate = step(0.72 - capture * 0.30, line_noise);
+	float tear_band = smoothstep(0.0, 1.0, sin(FRAGCOORD.y * 0.031 + TIME * (2.0 + danger * 4.0)) * 0.5 + 0.5);
+	float tear = (line_noise - 0.5) * px.x * (1.2 + nonlinear * 8.0 + capture * 16.0) * tear_gate * tear_band;
+	float wobble = sin(FRAGCOORD.y * 0.11 + TIME * 27.0) * px.x * nonlinear * 0.65;
+	vec2 warped_uv = uv + vec2(tear + wobble, sin(TIME * 4.0 + uv.x * 8.0) * px.y * nonlinear * 0.32);
+	float chroma = px.x * (nonlinear * 0.9 + capture * 3.4);
+	vec3 scene;
+	scene.r = textureLod(screen_texture, warped_uv + vec2(chroma, 0.0), 0.0).r;
+	scene.g = textureLod(screen_texture, warped_uv, 0.0).g;
+	scene.b = textureLod(screen_texture, warped_uv - vec2(chroma * 0.72, 0.0), 0.0).b;
+
+	float grain = hash(FRAGCOORD.xy + vec2(frame * 13.0, frame * 3.0)) - 0.5;
+	float static_amount = pow(nonlinear, 1.65) * 0.095 + capture * (0.20 + 0.16 * smoothstep(0.15, 0.85, capture_phase));
+	float scan = sin(FRAGCOORD.y * 1.55 + TIME * (9.0 + threat * 23.0)) * 0.5 + 0.5;
+	float scan_amount = (0.006 + nonlinear * 0.022 + capture * 0.035) * scan;
+	float exposure_pulse = sin(TIME * (3.0 + danger * 9.0) + sin(TIME * 1.7)) * (0.012 + nonlinear * 0.045 + capture * 0.08);
+	vec3 mono = vec3(dot(scene, vec3(0.27, 0.63, 0.10)));
+	vec3 corrupted = mix(scene, mono * vec3(0.82, 0.88, 0.82), nonlinear * 0.18 + capture * 0.26);
+	corrupted += vec3(grain * static_amount) + vec3(scan_amount * 0.30, scan_amount * 0.42, scan_amount * 0.34);
+	corrupted *= 1.0 + exposure_pulse;
+	vec3 static_color = vec3(0.54 + grain * 0.55, 0.58 + grain * 0.48, 0.53 + grain * 0.58);
+	corrupted = mix(corrupted, static_color, clamp(static_amount, 0.0, 0.46));
+
+	vec2 centered_uv = UV - vec2(0.5);
+	float vignette = smoothstep(0.34, 0.82, length(centered_uv) * vignette_intensity);
+	float pulse = pow(max(0.0, sin(TIME * (3.8 + danger * 8.5) + capture_phase * 7.0)), 8.0) * (danger * 0.16 + capture * 0.36);
+	corrupted *= 1.0 - vignette * (vignette_opacity + nonlinear * 0.11 + capture * 0.16);
+	corrupted = mix(corrupted, vec3(0.015, 0.018, 0.014), pulse);
+	float blend_amount = clamp(nonlinear * 0.86 + capture * 0.18, 0.0, 0.98);
+	COLOR = vec4(mix(scene, corrupted, blend_amount), 1.0);
 }
 """
 	var shader_mat := ShaderMaterial.new()
