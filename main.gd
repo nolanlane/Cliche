@@ -114,6 +114,30 @@ var observer_capture_phase := 0.0
 var observer_capture_pending_reset := false
 var hud_atmosphere_material: ShaderMaterial
 
+# --- Environmental Tension & Threat Director System ---
+var env_tension := 0.0 # 0.0 to 1.0 smoothed organic building instability
+var env_director_timer := 0.0
+var env_false_positive_timer := 28.0
+var env_electrical_wave_active := false
+var env_electrical_wave_progress := 0.0
+var env_electrical_wave_origin := Vector2.ZERO
+var env_electrical_wave_speed := 22.0
+var distant_thump_intensity := 0.0
+
+# Silence mechanic (deliberate vacuum of room tone)
+var silence_intensity := 0.0 # 0.0 (normal) to 1.0 (dead acoustic vacuum)
+var silence_target := 0.0
+var silence_timer := 0.0
+var silence_cooldown := 38.0
+
+# Acoustic sector identity tracking
+var current_player_sector: StringName = &"reception"
+
+# Observer Stance / Pose Variations
+# Presets: sentinel, slump, peek_left, peek_right, narrow_vigil
+var observer_pose_variant: StringName = &"sentinel"
+var observer_unseen_advance_timer := 0.0
+
 # Procedural fluorescent audio
 var audio_playback: AudioStreamGeneratorPlayback
 var audio_phase := 0.0
@@ -150,20 +174,41 @@ func _process(delta: float) -> void:
 	elapsed += delta
 	ballast_spark_intensity = move_toward(ballast_spark_intensity, 0.0, delta * 4.0)
 
+	_update_environmental_director(delta)
+
 	# Dynamic electrical ballast simulation per fixture
+	var capture_brownout := 1.0
+	if observer_state == ObserverState.CAPTURE:
+		capture_brownout = clampf(observer_capture_timer / 1.65, 0.03, 1.0)
+
 	for f in fixtures:
+		var wave_dip := 1.0
+		if env_electrical_wave_active and f.panel != null:
+			var f_xz := Vector2(f.panel.global_position.x, f.panel.global_position.z)
+			var dist_to_wave_origin := f_xz.distance_to(env_electrical_wave_origin)
+			var dist_from_front := absf(dist_to_wave_origin - env_electrical_wave_progress)
+			if dist_from_front < 5.5:
+				wave_dip = 0.22 + 0.78 * smoothstep(0.0, 5.5, dist_from_front)
+				if randf() < 0.06:
+					ballast_spark_intensity = maxf(ballast_spark_intensity, 0.35)
+
 		match f.type:
 			FixtureType.NORMAL:
-				var flutter := sin(elapsed * 120.0 + f.seed_offset) * 0.018 + sin(elapsed * 2.2 + f.seed_offset) * 0.015
-				var energy_mul := 1.0 + flutter
+				var desync := sin(elapsed * (116.0 + f.seed_offset * 1.7)) * 0.015 * env_tension
+				var flutter := sin(elapsed * 120.0 + f.seed_offset) * 0.018 + sin(elapsed * 2.2 + f.seed_offset) * 0.015 + desync
+				var energy_mul := (1.0 + flutter) * wave_dip * capture_brownout
 				if f.spot_light != null:
 					f.spot_light.light_energy = f.base_spot_energy * energy_mul
 				if f.fill_light != null:
 					f.fill_light.light_energy = f.base_fill_energy * energy_mul
+				if f.panel != null:
+					var mat := f.panel.get_surface_override_material(0) as StandardMaterial3D
+					if mat != null:
+						mat.emission_energy_multiplier = f.base_emission * energy_mul
 
 			FixtureType.SLOW_PULSE:
 				var pulse := sin(elapsed * 1.4 + f.seed_offset) * 0.16 + sin(elapsed * 0.35) * 0.08
-				var energy_mul := 1.0 + pulse
+				var energy_mul := (1.0 + pulse) * wave_dip * capture_brownout
 				if f.spot_light != null:
 					f.spot_light.light_energy = f.base_spot_energy * energy_mul
 				if f.fill_light != null:
@@ -175,7 +220,7 @@ func _process(delta: float) -> void:
 
 			FixtureType.DYING:
 				var flutter := randf_range(-0.06, 0.06) + sin(elapsed * 45.0 + f.seed_offset) * 0.04
-				var energy_mul := 1.0 + flutter
+				var energy_mul := (1.0 + flutter) * wave_dip * capture_brownout
 				if f.spot_light != null:
 					f.spot_light.light_energy = f.base_spot_energy * energy_mul
 				if f.fill_light != null:
@@ -187,7 +232,7 @@ func _process(delta: float) -> void:
 
 			FixtureType.FAINT_EMERGENCY:
 				var flutter := randf_range(-0.04, 0.04) + sin(elapsed * 24.0 + f.seed_offset) * 0.03
-				var energy_mul := 1.0 + flutter
+				var energy_mul := (1.0 + flutter) * wave_dip * capture_brownout
 				if f.spot_light != null:
 					f.spot_light.light_energy = f.base_spot_energy * energy_mul
 				if f.fill_light != null:
@@ -219,6 +264,7 @@ func _process(delta: float) -> void:
 				elif f.stutter_state == 2:
 					mul = 0.02
 
+				mul *= wave_dip * capture_brownout
 				if f.spot_light != null:
 					f.spot_light.light_energy = f.base_spot_energy * mul
 				if f.fill_light != null:
@@ -256,6 +302,109 @@ func _process(delta: float) -> void:
 	_update_lighter_hud(delta)
 	_update_observer_presence(delta)
 
+func _update_environmental_director(delta: float) -> void:
+	if player == null:
+		return
+
+	distant_thump_intensity = move_toward(distant_thump_intensity, 0.0, delta * 2.5)
+
+	# 1. Track player sector
+	var detected_sector := _observer_sector_for(player.global_position)
+	if detected_sector != current_player_sector:
+		current_player_sector = detected_sector
+
+	# 2. Environmental tension hysteresis
+	# Non-linear build-up driven by Observer state, dread, exposure, and progression
+	var target_tension := 0.02 + _observer_progression() * 0.16
+	match observer_state:
+		ObserverState.OBSERVING:
+			target_tension += 0.08 + observer_escalation * 0.06
+		ObserverState.MANIFESTED:
+			target_tension += 0.18 + observer_presence * 0.22 + observer_exposure_signal * 0.16
+		ObserverState.PRESSURE:
+			target_tension += 0.45 + observer_escalation * 0.20 + observer_dread * 0.25
+		ObserverState.PURSUIT:
+			target_tension += 0.78 + observer_attack_charge * 0.15
+		ObserverState.CAPTURE:
+			target_tension = 1.0
+		ObserverState.DISENGAGING:
+			target_tension += 0.22
+		ObserverState.RECOVERY:
+			target_tension += 0.06
+
+	# Distance pressure
+	if observer != null and observer.visible and observer_state in [ObserverState.MANIFESTED, ObserverState.PRESSURE, ObserverState.PURSUIT]:
+		var dist := player.global_position.distance_to(observer.global_position)
+		if dist < 18.0:
+			target_tension += (1.0 - dist / 18.0) * 0.22
+
+	# Smooth hysteresis: rises faster than it decays (lingering dread)
+	var tension_rate := 1.2 if target_tension > env_tension else 0.18
+	env_tension = move_toward(env_tension, clampf(target_tension, 0.0, 1.0), delta * tension_rate)
+
+	# 3. Silence Mechanic
+	# Silence is deliberate: short, rare, context-aware or psychological false-positive
+	if silence_timer > 0.0:
+		silence_timer -= delta
+		silence_target = 1.0
+		if silence_timer <= 0.0:
+			silence_target = 0.0
+			silence_cooldown = randf_range(42.0, 85.0)
+	elif silence_cooldown > 0.0:
+		silence_cooldown -= delta
+	else:
+		# Check triggers for silence events
+		# Context A: Encounter pressure building
+		if observer_state == ObserverState.PRESSURE and randf() < delta * 0.18:
+			_trigger_silence_event(randf_range(2.6, 4.2))
+		# Context B: Sudden manifest silence precursor (the room tone dies as the observer appears)
+		elif observer_state == ObserverState.MANIFESTED and observer_seen_time > 0.08 and observer_seen_time < 0.28 and randf() < delta * 0.5:
+			_trigger_silence_event(randf_range(2.2, 3.6))
+		# Context C: False-positive psychological dropout (room tone dies, player expects danger, nothing happens)
+		elif observer_state in [ObserverState.DORMANT, ObserverState.OBSERVING] and randf() < delta * 0.015:
+			_trigger_silence_event(randf_range(2.4, 4.0))
+
+	# Exponential transition for silence (drops in 0.3s, recovers over 1.4s)
+	var s_rate := 3.8 if silence_target > silence_intensity else 0.85
+	silence_intensity = move_toward(silence_intensity, silence_target, delta * s_rate)
+
+	# 4. Organic False Positives & Building Unreliability
+	env_false_positive_timer -= delta
+	if env_false_positive_timer <= 0.0:
+		env_false_positive_timer = randf_range(28.0, 62.0)
+		_trigger_organic_building_disturbance()
+
+	# 5. Electrical Wave Propagation
+	if env_electrical_wave_active:
+		env_electrical_wave_progress += delta * env_electrical_wave_speed
+		if env_electrical_wave_progress > 68.0:
+			env_electrical_wave_active = false
+
+func _trigger_silence_event(duration: float) -> void:
+	silence_timer = duration
+	silence_target = 1.0
+	silence_cooldown = randf_range(50.0, 95.0)
+
+func _trigger_organic_building_disturbance() -> void:
+	var roll := randf()
+	if roll < 0.38:
+		# Distant structural thump or metallic pipe contraction
+		distant_thump_intensity = randf_range(0.65, 1.0)
+		ballast_spark_intensity = maxf(ballast_spark_intensity, 0.4)
+	elif roll < 0.68:
+		# Travelling electrical wave across the fixtures
+		env_electrical_wave_active = true
+		env_electrical_wave_progress = 0.0
+		var angle := randf() * TAU
+		env_electrical_wave_origin = Vector2(cos(angle), sin(angle)) * 35.0
+	else:
+		# Minor random fixture pop
+		if not fixtures.is_empty():
+			var random_f := fixtures[randi() % fixtures.size()]
+			if random_f.type == FixtureType.NORMAL:
+				random_f.stutter_timer = randf_range(0.3, 0.75)
+				ballast_spark_intensity = maxf(ballast_spark_intensity, 0.6)
+
 func _build_ambient_hum() -> void:
 	var audio := AudioStreamPlayer.new()
 	audio.name = "FluorescentHum"
@@ -273,21 +422,26 @@ func _fill_audio_buffer() -> void:
 		return
 	var frames_available := audio_playback.get_frames_available()
 	var sample_rate := 22050.0
+	var silence_mult := clampf(1.0 - silence_intensity * 0.98, 0.02, 1.0)
+	var detune := sin(audio_phase * TAU * 0.35) * 1.6 * env_tension
+	var harmonic_loss := clampf(env_tension * 0.65, 0.0, 0.85)
+
 	for _f in range(frames_available):
-		var s60 := sin(audio_phase * TAU * 60.0) * 0.42
-		var s120 := sin(audio_phase * TAU * 120.0) * 0.30
-		var s180 := sin(audio_phase * TAU * 180.0) * 0.16
-		var s240 := sin(audio_phase * TAU * 240.0) * 0.09
-		var spark := (randf_range(-0.15, 0.15) if randf() < 0.1 else 0.0) * ballast_spark_intensity
-		# Pressure lives inside the fluorescent bed: sub-bass flutter and electrical
-		# roughness arrive before the player can confidently locate their source.
-		var pulse_rate := lerpf(0.72, 1.82, observer_feedback)
+		var s60 := sin(audio_phase * TAU * (60.0 + detune)) * (0.42 * (1.0 - harmonic_loss * 0.35))
+		var s120 := sin(audio_phase * TAU * (120.0 + detune * 1.5)) * (0.30 * (1.0 - harmonic_loss * 0.20))
+		var s180 := sin(audio_phase * TAU * 180.0) * (0.16 * (1.0 - harmonic_loss))
+		var s240 := sin(audio_phase * TAU * 240.0) * (0.09 * (1.0 - harmonic_loss * 1.2))
+		var spark := (randf_range(-0.16, 0.16) if randf() < (0.10 + env_tension * 0.15) else 0.0) * ballast_spark_intensity
+		var thump := sin(audio_phase * TAU * 45.0) * exp(-fmod(elapsed * 2.0, 1.0) * 12.0) * distant_thump_intensity * 0.06
+
+		var pulse_rate := lerpf(0.72, 1.95, clampf(observer_feedback + env_tension * 0.45, 0.0, 1.0))
 		var pulse_phase := fmod(observer_audio_phase * pulse_rate, 1.0)
 		var pulse_env := exp(-pulse_phase * 11.0) + exp(-fmod(pulse_phase + 0.72, 1.0) * 15.0) * 0.52
-		var presence_tone := sin(observer_audio_phase * TAU * 37.0) * pulse_env * observer_feedback * 0.055
-		var presence_noise := randf_range(-0.014, 0.014) * (observer_presence + observer_feedback * 0.8)
+		var presence_tone := sin(observer_audio_phase * TAU * 37.0) * pulse_env * (observer_feedback * 0.055 + env_tension * 0.022)
+		var presence_noise := randf_range(-0.014, 0.014) * (observer_presence + observer_feedback * 0.8 + env_tension * 0.15)
 		var noise := randf_range(-0.022, 0.022) + spark + presence_noise
-		var sample := (s60 + s120 + s180 + s240 + noise) * 0.22 + presence_tone
+
+		var sample := ((s60 + s120 + s180 + s240 + noise) * 0.22 + presence_tone + thump) * silence_mult
 		audio_playback.push_frame(Vector2(sample, sample))
 		audio_phase += 1.0 / sample_rate
 		observer_audio_phase += 1.0 / sample_rate
@@ -295,11 +449,14 @@ func _fill_audio_buffer() -> void:
 			audio_phase -= 1.0
 
 func _build_spatial_ambience() -> void:
-	# Quiet positional beds make the two most enclosed wings recognizable without
-	# turning them into announced zones. The pump is felt before it is consciously heard;
-	# the crawlspace carries a thin, filtered draft through its far bend.
-	_add_spatial_ambience("SumpPumpBed", Vector3(0.0, -0.25, 48.0), &"pump", -18.5, 30.0, 9.0)
-	_add_spatial_ambience("CrawlspaceDraft", Vector3(44.0, 0.45, -34.0), &"draft", -20.0, 24.0, 7.0)
+	# Subtle sector identity beds without flooding the map with loud emitters
+	_add_spatial_ambience("ReceptionHVAC", Vector3(0.0, 2.5, 0.0), &"hvac", -22.0, 36.0, 10.0)
+	_add_spatial_ambience("SumpPumpBed", Vector3(0.0, -0.25, 48.0), &"pump", -18.5, 32.0, 9.0)
+	_add_spatial_ambience("CrawlspaceDraft", Vector3(44.0, 0.45, -34.0), &"draft", -20.0, 26.0, 7.0)
+	_add_spatial_ambience("ForestResonance", Vector3(-35.0, 1.4, 0.0), &"forest", -21.0, 34.0, 8.0)
+	_add_spatial_ambience("NorthAirDuct", Vector3(0.0, 2.6, -32.0), &"duct", -22.5, 30.0, 8.0)
+	_add_spatial_ambience("ArchiveVault", Vector3(-35.0, 1.4, 38.0), &"archive", -23.0, 28.0, 7.0)
+	_add_spatial_ambience("NowhereDraft", Vector3(38.0, 1.4, 38.0), &"nowhere", -23.5, 28.0, 7.0)
 
 func _add_spatial_ambience(label: String, world_pos: Vector3, kind: StringName, volume_db: float, max_distance: float, unit_size: float) -> void:
 	var source := AudioStreamPlayer3D.new()
@@ -308,7 +465,7 @@ func _add_spatial_ambience(label: String, world_pos: Vector3, kind: StringName, 
 	source.volume_db = volume_db
 	source.max_distance = max_distance
 	source.unit_size = unit_size
-	source.attenuation_filter_cutoff_hz = 1350.0 if kind == &"draft" else 900.0
+	source.attenuation_filter_cutoff_hz = 1450.0 if kind in [&"draft", &"duct"] else 900.0
 	var generator := AudioStreamGenerator.new()
 	generator.mix_rate = 11025.0
 	generator.buffer_length = 0.20
@@ -324,6 +481,7 @@ func _add_spatial_ambience(label: String, world_pos: Vector3, kind: StringName, 
 
 func _fill_spatial_ambience() -> void:
 	var sample_rate := 11025.0
+	var silence_mult := clampf(1.0 - silence_intensity * 0.98, 0.0, 1.0)
 	for source in spatial_ambience_sources:
 		var playback := source["playback"] as AudioStreamGeneratorPlayback
 		if playback == null:
@@ -333,12 +491,28 @@ func _fill_spatial_ambience() -> void:
 		var kind: StringName = source["kind"]
 		for _frame in range(playback.get_frames_available()):
 			var sample := 0.0
-			if kind == &"pump":
-				sample = sin(phase * TAU * 31.0) * 0.18 + sin(phase * TAU * 62.0) * 0.055
-				sample += sin(phase * TAU * 15.5) * 0.025
-			else:
-				smooth_noise = lerpf(smooth_noise, randf_range(-1.0, 1.0), 0.022)
-				sample = smooth_noise * 0.24 + sin(phase * TAU * 83.0) * 0.028
+			match kind:
+				&"pump":
+					sample = sin(phase * TAU * 31.0) * 0.18 + sin(phase * TAU * 62.0) * 0.055 + sin(phase * TAU * 15.5) * 0.025
+				&"draft", &"duct":
+					smooth_noise = lerpf(smooth_noise, randf_range(-1.0, 1.0), 0.022)
+					sample = smooth_noise * 0.22 + sin(phase * TAU * 76.0) * 0.020
+				&"hvac":
+					smooth_noise = lerpf(smooth_noise, randf_range(-1.0, 1.0), 0.018)
+					sample = sin(phase * TAU * 42.0) * 0.12 + sin(phase * TAU * 84.0) * 0.04 + smooth_noise * 0.12
+				&"forest":
+					smooth_noise = lerpf(smooth_noise, randf_range(-1.0, 1.0), 0.015)
+					sample = sin(phase * TAU * 28.5) * 0.14 + sin(phase * TAU * 57.0) * 0.035 + smooth_noise * 0.10
+				&"archive":
+					smooth_noise = lerpf(smooth_noise, randf_range(-1.0, 1.0), 0.012)
+					sample = sin(phase * TAU * 140.0) * 0.045 + smooth_noise * 0.08
+				&"nowhere":
+					smooth_noise = lerpf(smooth_noise, randf_range(-1.0, 1.0), 0.016)
+					sample = sin(phase * TAU * 49.5) * 0.07 + sin(phase * TAU * 51.5) * 0.07 + smooth_noise * 0.09
+				_:
+					smooth_noise = lerpf(smooth_noise, randf_range(-1.0, 1.0), 0.020)
+					sample = smooth_noise * 0.20
+			sample *= silence_mult
 			playback.push_frame(Vector2(sample, sample))
 			phase += 1.0 / sample_rate
 			if phase >= 1.0:
@@ -2100,26 +2274,41 @@ func _spawn_player() -> void:
 
 func _build_observer_presence() -> void:
 	observer_markers = [
-		Vector3(-16.0, 0.0, -50.7), # sealed plant door
-		Vector3(49.8, 0.0, 38.0),   # hallway to nowhere
+		Vector3(-16.0, 0.0, -50.7), # sealed plant door (North pocket dead-end)
+		Vector3(49.8, 0.0, 38.0),   # hallway to nowhere end
 		Vector3(-44.0, 0.0, 45.8),  # archive dead end
-		Vector3(-46.0, 0.0, -14.5), # pillar forest edge
-		Vector3(12.0, -1.2, 47.0),  # sump pump room
-		Vector3(7.0, 0.0, -20.8),   # north doorway
-		Vector3(-48.0, 0.0, 1.0),   # forest intersection
-		Vector3(17.0, 0.0, -18.5),  # crawlspace threshold
+		Vector3(-46.0, 0.0, -14.5), # pillar forest deep edge
+		Vector3(12.0, -1.2, 47.0),  # sump pump chamber beside pump
+		Vector3(7.0, 0.0, -20.8),   # north doorway portal
+		Vector3(-48.0, 0.0, 1.0),   # forest west aisle intersection
+		Vector3(17.0, 0.0, -18.5),  # crawlspace threshold mouth
 		Vector3(34.5, 0.0, 28.5),   # diagonal blind angle
-		Vector3(-30.0, 0.0, 20.2),  # forest portal
+		Vector3(-30.0, 0.0, 20.2),  # forest south-east portal
 		Vector3(-20.8, 0.0, 0.0),   # west portal reveal
-		Vector3(0.0, 0.0, -20.5),   # north central sightline
+		Vector3(0.0, 0.0, -20.5),   # north central long sightline
 		Vector3(27.2, 0.0, 38.0),   # nowhere doorway silhouette
-		Vector3(-20.0, 0.0, 41.0),  # archive portal
-		Vector3(1.5, -1.2, 38.0)    # sump column occlusion
+		Vector3(-20.0, 0.0, 41.0),  # archive portal threshold
+		Vector3(1.5, -1.2, 38.0),   # sump pit center column shadow
+		# Authored architectural additions for enriched sightings:
+		Vector3(-38.0, 0.0, 8.5),   # pillar forest column occlusion (behind cx=-38, cz=6)
+		Vector3(-26.0, 0.0, -6.5),  # pillar forest entry sightline from reception
+		Vector3(-7.5, 0.0, -34.0),  # north corridor blind Z-turn
+		Vector3(-0.5, 0.0, -42.0),  # deep north dead end framed by doorway
+		Vector3(24.0, 0.0, -20.5),  # east corridor junction looking toward reception
+		Vector3(38.0, 0.0, -32.0),  # low crawlspace exterior alcove
+		Vector3(-13.0, -1.2, 28.5), # sump ramp base looking up at player
+		Vector3(-35.0, 0.0, 32.0),  # archive entry shelf shadow
+		Vector3(20.0, 0.0, 12.0),   # reception east corridor corner
+		Vector3(-14.0, 0.0, 14.0),  # reception south-west stepped ledge framing
+		Vector3(32.0, 0.0, 42.0)    # south-east alcove dead-end
 	]
 	observer_marker_roles = [
 		&"dead_end", &"dead_end", &"dead_end", &"obscured", &"landmark",
 		&"doorway", &"intersection", &"doorway", &"obscured", &"doorway",
-		&"doorway", &"distant", &"doorway", &"intersection", &"obscured"
+		&"doorway", &"distant", &"doorway", &"intersection", &"obscured",
+		&"pillar", &"pillar", &"doorway", &"distant", &"intersection",
+		&"crawlspace", &"sump", &"obscured", &"doorway", &"obscured",
+		&"dead_end"
 	]
 
 	observer = Node3D.new()
@@ -2275,6 +2464,140 @@ func _add_observer_part(parent: Node3D, part_name: String, mesh: Mesh, part_posi
 	part.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 	parent.add_child(part)
 	return part
+
+func _apply_observer_pose(variant: StringName) -> void:
+	if observer == null:
+		return
+	var stance := observer.get_node_or_null("Stance") as Node3D
+	if stance == null:
+		return
+	observer_pose_variant = variant
+
+	var head := stance.get_node_or_null("Head") as Node3D
+	var neck := stance.get_node_or_null("Neck") as Node3D
+	var torso := stance.get_node_or_null("Torso") as Node3D
+	var shoulders := stance.get_node_or_null("Shoulders") as Node3D
+	var arm_l := stance.get_node_or_null("UpperArm_L") as Node3D
+	var arm_r := stance.get_node_or_null("UpperArm_R") as Node3D
+	var forearm_l := stance.get_node_or_null("Forearm_L") as Node3D
+	var forearm_r := stance.get_node_or_null("Forearm_R") as Node3D
+	var hand_l := stance.get_node_or_null("Hand_L") as Node3D
+	var hand_r := stance.get_node_or_null("Hand_R") as Node3D
+
+	match variant:
+		&"slump":
+			# Heavy asymmetrical slump, right shoulder down, head bowed
+			if head != null:
+				head.position = Vector3(-0.035, 2.22, 0.02)
+				head.rotation_degrees = Vector3(-14.0, 8.0, -8.5)
+			if neck != null:
+				neck.rotation_degrees = Vector3(-5.0, 0.0, -4.0)
+			if torso != null:
+				torso.rotation_degrees = Vector3(5.0, 0.0, -3.0)
+			if shoulders != null:
+				shoulders.position = Vector3(-0.008, 1.78, 0.0)
+				shoulders.rotation_degrees = Vector3(0.0, 0.0, 86.0)
+			if arm_l != null:
+				arm_l.rotation_degrees = Vector3(2.0, 0.0, -4.0)
+			if arm_r != null:
+				arm_r.rotation_degrees = Vector3(6.0, 0.0, 14.0)
+			if forearm_r != null:
+				forearm_r.position.y = 0.88
+			if hand_r != null:
+				hand_r.rotation_degrees = Vector3(-8.0, 0.0, -9.0)
+
+		&"peek_left":
+			# Leaning left from behind pillar/doorway
+			if head != null:
+				head.position = Vector3(-0.11, 2.25, -0.02)
+				head.rotation_degrees = Vector3(-4.0, 12.0, -11.0)
+			if neck != null:
+				neck.position = Vector3(-0.06, 2.02, 0.0)
+				neck.rotation_degrees = Vector3(0.0, 0.0, -7.0)
+			if torso != null:
+				torso.rotation_degrees = Vector3(1.5, 0.0, -6.5)
+			if shoulders != null:
+				shoulders.rotation_degrees = Vector3(0.0, 0.0, 87.0)
+			if arm_l != null:
+				arm_l.rotation_degrees = Vector3(4.0, 0.0, -14.0)
+			if arm_r != null:
+				arm_r.rotation_degrees = Vector3(0.0, 0.0, 4.0)
+
+		&"peek_right":
+			# Leaning right from behind pillar/doorway
+			if head != null:
+				head.position = Vector3(0.09, 2.26, -0.02)
+				head.rotation_degrees = Vector3(-5.0, -11.0, 10.0)
+			if neck != null:
+				neck.position = Vector3(0.04, 2.02, 0.0)
+				neck.rotation_degrees = Vector3(0.0, 0.0, 6.0)
+			if torso != null:
+				torso.rotation_degrees = Vector3(1.5, 0.0, 5.5)
+			if shoulders != null:
+				shoulders.rotation_degrees = Vector3(0.0, 0.0, 96.0)
+			if arm_r != null:
+				arm_r.rotation_degrees = Vector3(3.0, 0.0, 16.0)
+			if arm_l != null:
+				arm_l.rotation_degrees = Vector3(0.0, 0.0, -4.0)
+
+		&"narrow_vigil":
+			# Arms tucked against torso, neck stretched upright, head tilted down
+			if head != null:
+				head.position = Vector3(-0.02, 2.31, -0.015)
+				head.rotation_degrees = Vector3(-12.0, 0.0, 3.5)
+			if neck != null:
+				neck.position = Vector3(-0.01, 2.04, 0.0)
+				neck.rotation_degrees = Vector3(-2.0, 0.0, 0.0)
+			if torso != null:
+				torso.rotation_degrees = Vector3(0.0, 0.0, 0.0)
+			if shoulders != null:
+				shoulders.position = Vector3(-0.008, 1.83, 0.0)
+				shoulders.rotation_degrees = Vector3(0.0, 0.0, 91.5)
+			if arm_l != null:
+				arm_l.position.x = -0.26
+				arm_l.rotation_degrees = Vector3(0.0, 0.0, -3.0)
+			if arm_r != null:
+				arm_r.position.x = 0.26
+				arm_r.rotation_degrees = Vector3(0.0, 0.0, 4.0)
+			if forearm_l != null:
+				forearm_l.position.x = -0.28
+			if forearm_r != null:
+				forearm_r.position.x = 0.28
+			if hand_l != null:
+				hand_l.position.x = -0.29
+			if hand_r != null:
+				hand_r.position.x = 0.29
+
+		_: # "sentinel" - default rigid silhouette
+			if head != null:
+				head.position = Vector3(-0.045, 2.27, -0.025)
+				head.rotation_degrees = Vector3(-7.0, 5.0, -2.5)
+			if neck != null:
+				neck.position = Vector3(-0.02, 2.02, 0.0)
+				neck.rotation_degrees = Vector3(0.0, 0.0, -2.0)
+			if torso != null:
+				torso.rotation_degrees = Vector3(3.0, 0.0, -1.7)
+			if shoulders != null:
+				shoulders.position = Vector3(-0.008, 1.82, 0.0)
+				shoulders.rotation_degrees = Vector3(0.0, 0.0, 91.5)
+			if arm_l != null:
+				arm_l.position = Vector3(-0.31, 1.51, 0.005)
+				arm_l.rotation_degrees = Vector3(1.5, 0.0, -7.0)
+			if arm_r != null:
+				arm_r.position = Vector3(0.31, 1.49, 0.005)
+				arm_r.rotation_degrees = Vector3(1.5, 0.0, 10.0)
+			if forearm_l != null:
+				forearm_l.position = Vector3(-0.345, 0.94, 0.025)
+				forearm_l.rotation_degrees = Vector3(-2.0, 0.0, 4.0)
+			if forearm_r != null:
+				forearm_r.position = Vector3(0.345, 0.92, 0.025)
+				forearm_r.rotation_degrees = Vector3(-2.0, 0.0, -7.0)
+			if hand_l != null:
+				hand_l.position = Vector3(-0.36, 0.60, 0.035)
+				hand_l.rotation_degrees = Vector3(-5.0, 0.0, 3.0)
+			if hand_r != null:
+				hand_r.position = Vector3(0.36, 0.57, 0.035)
+				hand_r.rotation_degrees = Vector3(-5.0, 0.0, -5.5)
 
 func _update_observer_presence(delta: float) -> void:
 	if observer == null or player == null:
@@ -2489,11 +2812,12 @@ func _update_observer_pressure(delta: float, camera_node: Camera3D) -> void:
 	if distance < 9.5 or observer_centered_time > 2.1 or observer_exposure_time > 5.5:
 		_begin_observer_pursuit()
 		return
-	if not has_sight and observer_unseen_time > 1.8 and observer_manifest_steps < 2 and observer_relocation_timer <= 0.0:
+	if not has_sight and observer_unseen_time > 1.6 and observer_manifest_steps < 2 and observer_relocation_timer <= 0.0:
 		observer.visible = false
-		if _place_observer_for_state(10.0, 24.0, true):
+		if _place_observer_for_state(8.5, 22.0, true):
 			observer_manifest_steps += 1
 			observer_relocation_timer = randf_range(3.5, 6.0)
+			observer_unseen_time = 0.0
 		else:
 			# Never leave a live pressure encounter in an invisible half-state when
 			# the current room has no vetted closer anchor.
@@ -2512,6 +2836,7 @@ func _begin_observer_pursuit() -> void:
 	observer_attack_charge = 0.0
 	observer_blocked_time = 0.0
 	observer_escape_time = 0.0
+	observer_unseen_advance_timer = 0.0
 	observer_escalation = clampf(observer_escalation + 0.035, 0.0, 1.0)
 	_set_observer_state(ObserverState.PURSUIT, lerpf(13.0, 19.0, observer_escalation))
 
@@ -2533,23 +2858,42 @@ func _update_observer_pursuit(delta: float, camera_node: Camera3D) -> void:
 	else:
 		observer_dread = move_toward(observer_dread, 0.34, delta * 0.055)
 
-	if absf(observer.global_position.y - player.global_position.y) < 1.45 and walk_clear and distance > 1.75:
-		var speed := lerpf(2.05, 3.35, observer_escalation)
-		if centered:
-			speed *= 0.20 if observer_escalation < 0.76 else 0.38
-		elif player_has_sight:
-			speed *= 0.70
-		var direction := player.global_position - observer.global_position
-		direction.y = 0.0
-		if direction.length_squared() > 0.001:
-			var proposed := observer.global_position + direction.normalized() * minf(speed * delta, maxf(0.0, distance - 1.72))
+	# --- DISCONTINUOUS UNSEEN MOVEMENT ---
+	# The Observer does not run like a normal chasing NPC. When watched, it remains
+	# dead still. It closes distance in unnatural jumps exclusively when unobserved!
+	if not player_has_sight:
+		observer_unseen_advance_timer += delta
+		var advance_interval := lerpf(1.7, 0.95, observer_escalation)
+		if observer_unseen_advance_timer >= advance_interval and walk_clear:
+			observer_unseen_advance_timer = 0.0
+			var step_dist := lerpf(3.4, 5.8, observer_escalation)
+			var to_player := (player.global_position - observer.global_position)
+			to_player.y = 0.0
+			var current_d := to_player.length()
+			if current_d > 2.0:
+				var move_amount := minf(step_dist, current_d - 1.82)
+				var new_pos := observer.global_position + to_player.normalized() * move_amount
+				var grounded := _observer_grounded_position(new_pos)
+				if grounded != Vector3.INF:
+					observer.global_position = grounded
+					observer.look_at(Vector3(player.global_position.x, observer.global_position.y, player.global_position.z), Vector3.UP)
+					var pursuit_poses: Array[StringName] = [&"slump", &"narrow_vigil", &"sentinel"]
+					_apply_observer_pose(pursuit_poses[randi() % pursuit_poses.size()])
+					ballast_spark_intensity = maxf(ballast_spark_intensity, 0.35)
+		observer_blocked_time = 0.0
+	else:
+		# Direct line of sight freezes the figure in absolute, unnatural stillness
+		observer_unseen_advance_timer = 0.0
+		# Glacial drift only at extreme late-game escalation (>0.86)
+		if observer_escalation > 0.86 and walk_clear and distance > 2.2:
+			var direction := (player.global_position - observer.global_position).normalized()
+			direction.y = 0.0
+			var proposed := observer.global_position + direction * (0.35 * delta)
 			var grounded := _observer_grounded_position(proposed)
 			if grounded != Vector3.INF:
 				observer.global_position = grounded
 				observer.look_at(Vector3(player.global_position.x, observer.global_position.y, player.global_position.z), Vector3.UP)
 		observer_blocked_time = 0.0
-	else:
-		observer_blocked_time += delta
 
 	if centered and player.has_method("is_lighter_lit") and player.is_lighter_lit() and distance > 3.0:
 		observer_escape_time += delta * 1.25
@@ -2574,14 +2918,18 @@ func _update_observer_pursuit(delta: float, camera_node: Camera3D) -> void:
 		_begin_observer_disengage()
 
 func _update_observer_capture(delta: float, camera_node: Camera3D) -> void:
-	observer_capture_phase += delta
-	observer_capture_timer -= delta
+	if not observer_debug_forced:
+		observer_capture_phase += delta
+		observer_capture_timer -= delta
 	observer.visible = true
 	observer_presence = 1.0
 	observer_dread = 1.0
 	observer_screen_threat = 1.0
-	# Keep the face just beyond the player's personal space. The figure is not
-	# animated like an NPC; it drifts in and out of coherence as the image fails.
+	# Trigger electrical vacuum during capture
+	silence_intensity = 0.98
+	ballast_spark_intensity = maxf(ballast_spark_intensity, 0.8)
+
+	# Keep the face just beyond the player's personal space.
 	var forward := -camera_node.global_transform.basis.z
 	var capture_distance := lerpf(2.75, 1.45, clampf(1.0 - observer_capture_timer / 1.65, 0.0, 1.0))
 	var target_position := camera_node.global_position + forward * capture_distance
@@ -2590,8 +2938,10 @@ func _update_observer_capture(delta: float, camera_node: Camera3D) -> void:
 	observer.look_at(camera_node.global_position + Vector3.UP * 0.08, Vector3.UP)
 	if player.has_method("set_observer_capture"):
 		player.set_observer_capture(maxf(observer_capture_timer, 0.0))
-	if observer_capture_timer <= 0.0:
+	if not observer_debug_forced and observer_capture_timer <= 0.0:
 		observer.visible = false
+		silence_intensity = 0.0
+		silence_timer = 0.0
 		if observer_capture_pending_reset and player.has_method("reset_after_observer_collapse"):
 			player.reset_after_observer_collapse(observer_safe_position)
 		observer_capture_pending_reset = false
@@ -2738,9 +3088,14 @@ func _place_observer_for_state(min_distance: float, max_distance: float, prefer_
 			score -= 4.0
 		elif role == &"dead_end" and observer_variant == &"sentinel":
 			score -= 3.5
+		elif role == &"pillar":
+			score -= 4.5
 		elif role == &"obscured":
-			score -= 1.8
-		if samples == 0:
+			score -= 2.2
+		# Rewarding partial occlusion (1 or 2 rays hit) creates stunning cinematic silhouettes
+		if samples in [1, 2]:
+			score -= 3.6
+		elif samples == 0:
 			score += 2.4
 		if score < best_score:
 			best_score = score
@@ -2752,6 +3107,23 @@ func _place_observer_for_state(min_distance: float, max_distance: float, prefer_
 	var look_target := Vector3(player.global_position.x, observer.global_position.y, player.global_position.z)
 	if observer.global_position.distance_squared_to(look_target) > 0.01:
 		observer.look_at(look_target, Vector3.UP)
+
+	# Select and apply pose variant based on chosen marker role & context
+	var chosen_role: StringName = observer_marker_roles[best_index]
+	var chosen_pose: StringName = &"sentinel"
+	if chosen_role in [&"pillar", &"doorway"]:
+		var to_obs := (observer.global_position - player.global_position).normalized()
+		var p_right := camera_node.global_transform.basis.x
+		chosen_pose = &"peek_left" if to_obs.dot(p_right) > 0.0 else &"peek_right"
+	elif chosen_role in [&"dead_end", &"distant"]:
+		chosen_pose = &"narrow_vigil" if randf() < 0.55 else &"sentinel"
+	elif observer_state in [ObserverState.PRESSURE, ObserverState.PURSUIT]:
+		chosen_pose = &"slump" if randf() < 0.65 else &"narrow_vigil"
+	else:
+		var candidate_poses: Array[StringName] = [&"sentinel", &"slump", &"narrow_vigil", &"peek_left", &"peek_right"]
+		chosen_pose = candidate_poses[randi() % candidate_poses.size()]
+	_apply_observer_pose(chosen_pose)
+
 	observer.visible = true
 	observer_seen_time = 0.0
 	observer_centered_time = 0.0
@@ -2808,21 +3180,41 @@ func _observer_has_walk_path(from: Vector3, to: Vector3) -> bool:
 	return get_world_3d().direct_space_state.intersect_ray(query).is_empty()
 
 func _apply_observer_light_pressure() -> void:
-	if player == null or observer_feedback < 0.05:
+	if player == null:
 		return
-	for fixture in fixtures:
-		if fixture.panel == null:
-			continue
-		var distance := fixture.panel.global_position.distance_to(player.global_position)
-		if distance > 15.0:
-			continue
-		var falloff := 1.0 - distance / 15.0
-		var irregular := 0.5 + 0.5 * sin(elapsed * (17.0 + fixture.seed_offset * 0.3) + fixture.seed_offset)
-		var suppression := observer_feedback * falloff * (0.08 + irregular * 0.18)
-		if fixture.spot_light != null:
-			fixture.spot_light.light_energy *= 1.0 - suppression
-		if fixture.fill_light != null:
-			fixture.fill_light.light_energy *= 1.0 - suppression * 0.72
+	if observer_feedback > 0.05:
+		for fixture in fixtures:
+			if fixture.panel == null:
+				continue
+			var distance := fixture.panel.global_position.distance_to(player.global_position)
+			if distance > 15.0:
+				continue
+			var falloff := 1.0 - distance / 15.0
+			var irregular := 0.5 + 0.5 * sin(elapsed * (17.0 + fixture.seed_offset * 0.3) + fixture.seed_offset)
+			var suppression := observer_feedback * falloff * (0.08 + irregular * 0.18)
+			if fixture.spot_light != null:
+				fixture.spot_light.light_energy *= 1.0 - suppression
+			if fixture.fill_light != null:
+				fixture.fill_light.light_energy *= 1.0 - suppression * 0.72
+
+	# Observer subtle fixture shadow cloak
+	if observer != null and observer.visible:
+		var obs_pos := observer.global_position
+		for fixture in fixtures:
+			if fixture.panel == null:
+				continue
+			var o_dist := fixture.panel.global_position.distance_to(obs_pos)
+			if o_dist < 8.5:
+				var o_falloff := 1.0 - o_dist / 8.5
+				var o_suppression := (0.16 + observer_screen_threat * 0.28) * o_falloff
+				if fixture.spot_light != null:
+					fixture.spot_light.light_energy *= 1.0 - o_suppression
+				if fixture.fill_light != null:
+					fixture.fill_light.light_energy *= 1.0 - o_suppression * 0.75
+				if fixture.panel != null:
+					var mat := fixture.panel.get_surface_override_material(0) as StandardMaterial3D
+					if mat != null:
+						mat.emission_energy_multiplier *= 1.0 - o_suppression * 0.55
 
 func debug_observer_force_state(state_name: String) -> Dictionary:
 	observer_debug_forced = true
@@ -2833,14 +3225,17 @@ func debug_observer_force_state(state_name: String) -> Dictionary:
 			_set_observer_state(ObserverState.OBSERVING, 8.0)
 		"manifested":
 			observer_variant = &"doorway"
-			_place_observer_for_state(18.0, 48.0, true)
+			if not _place_observer_for_state(16.0, 48.0, true):
+				_place_observer_for_state(10.0, 52.0, false)
 			_set_observer_state(ObserverState.MANIFESTED, 30.0)
 		"pressure":
 			observer_variant = &"tail"
-			_place_observer_for_state(10.0, 28.0, true)
+			if not _place_observer_for_state(10.0, 26.0, true):
+				_place_observer_for_state(7.0, 30.0, false)
 			_set_observer_state(ObserverState.PRESSURE, 30.0)
 		"pursuit":
-			_place_observer_for_state(8.0, 18.0, true)
+			if not _place_observer_for_state(7.0, 18.0, true):
+				_place_observer_for_state(5.0, 20.0, false)
 			_set_observer_state(ObserverState.PURSUIT, 30.0)
 		"capture":
 			observer_capture_timer = 1.65
@@ -2849,8 +3244,141 @@ func debug_observer_force_state(state_name: String) -> Dictionary:
 			_set_observer_state(ObserverState.CAPTURE, 1.65)
 		"recovery":
 			_set_observer_state(ObserverState.RECOVERY, 30.0)
+		"silence":
+			_trigger_silence_event(5.0)
+		"normal", "resume":
+			observer_debug_forced = false
+			_set_observer_state(ObserverState.OBSERVING, 15.0)
 		_:
 			return {"ok": false, "error": "unknown state"}
+	return debug_observer_snapshot()
+
+func _debug_align_player_to(target_pos: Vector3) -> void:
+	if player == null:
+		return
+	if "pitch" in player:
+		player.pitch = 0.0
+	if "camera" in player and player.camera != null:
+		player.camera.rotation = Vector3.ZERO
+	var look_flat := Vector3(target_pos.x, player.global_position.y, target_pos.z)
+	if (look_flat - player.global_position).length_squared() > 0.01:
+		player.look_at(look_flat, Vector3.UP)
+		player.rotation.x = 0.0
+		player.rotation.z = 0.0
+
+func debug_setup_scenario(scenario_id: int) -> Dictionary:
+	observer_debug_forced = true
+	match scenario_id:
+		2: # Early ambiguous distant Observer sighting
+			player.global_position = Vector3(0.0, 0.05, 4.0)
+			observer.global_position = Vector3(0.0, 0.015, -20.5)
+			_debug_align_player_to(observer.global_position)
+			observer.look_at(player.global_position, Vector3.UP)
+			observer.visible = true
+			_apply_observer_pose(&"sentinel")
+			_set_observer_state(ObserverState.MANIFESTED, 40.0)
+			observer_exposure_signal = 0.15
+			observer_proximity_signal = 0.05
+			observer_presence = 0.25
+			env_tension = 0.12
+			silence_intensity = 0.0
+
+		3: # Partially occluded Observer (behind pillar in Forest)
+			player.global_position = Vector3(-27.0, 0.05, 3.0)
+			observer.global_position = Vector3(-32.0, 0.015, 0.78)
+			_debug_align_player_to(Vector3(-31.5, 1.2, 0.65))
+			observer.look_at(player.global_position, Vector3.UP)
+			observer.visible = true
+			_apply_observer_pose(&"peek_left")
+			_set_observer_state(ObserverState.MANIFESTED, 40.0)
+			observer_exposure_signal = 0.35
+			observer_proximity_signal = 0.25
+			observer_presence = 0.50
+			env_tension = 0.30
+
+		4: # Mid-escalation pressure (slump pose, light suppression, subtle static)
+			player.global_position = Vector3(0.0, 0.05, 3.0)
+			observer.global_position = Vector3(0.0, 0.015, -9.0)
+			_debug_align_player_to(observer.global_position)
+			observer.look_at(player.global_position, Vector3.UP)
+			observer.visible = true
+			_apply_observer_pose(&"slump")
+			_set_observer_state(ObserverState.PRESSURE, 40.0)
+			observer_exposure_signal = 0.65
+			observer_proximity_signal = 0.45
+			observer_presence = 0.72
+			observer_dread = 0.45
+			env_tension = 0.55
+			ballast_spark_intensity = 0.4
+
+		5: # Late high-danger encounter (close proximity, narrow_vigil pose, screen threat & jitter)
+			player.global_position = Vector3(0.0, 0.05, -3.0)
+			observer.global_position = Vector3(0.0, 0.015, -8.5)
+			_debug_align_player_to(observer.global_position)
+			observer.look_at(player.global_position, Vector3.UP)
+			observer.visible = true
+			_apply_observer_pose(&"narrow_vigil")
+			_set_observer_state(ObserverState.PURSUIT, 40.0)
+			observer_exposure_signal = 0.90
+			observer_proximity_signal = 0.75
+			observer_presence = 0.95
+			observer_dread = 0.82
+			env_tension = 0.88
+			ballast_spark_intensity = 0.85
+
+		6: # Capture sequence (in-your-face, blackout, vertical sync roll)
+			player.global_position = Vector3(0.0, 0.05, 0.0)
+			observer.global_position = Vector3(0.0, 0.015, -1.6)
+			_debug_align_player_to(observer.global_position)
+			observer.look_at(player.global_position, Vector3.UP)
+			observer.visible = true
+			_apply_observer_pose(&"slump")
+			observer_capture_timer = 1.35
+			observer_capture_phase = 0.45
+			observer_capture_pending_reset = false
+			_set_observer_state(ObserverState.CAPTURE, 1.35)
+			silence_intensity = 0.95
+			ballast_spark_intensity = 1.0
+			observer_screen_threat = 1.0
+			observer_dread = 1.0
+			observer_exposure_signal = 1.0
+			observer_proximity_signal = 1.0
+
+		8: # Sector: Sunken Sump Chamber & damp pipe array
+			player.global_position = Vector3(0.0, -0.6, 26.0)
+			observer.global_position = Vector3(0.0, -1.185, 34.0)
+			_debug_align_player_to(observer.global_position)
+			if "pitch" in player:
+				player.pitch = deg_to_rad(-6.0)
+				if "camera" in player and player.camera != null:
+					player.camera.rotation.x = player.pitch
+			observer.look_at(player.global_position, Vector3.UP)
+			observer.visible = true
+			_apply_observer_pose(&"sentinel")
+			_set_observer_state(ObserverState.MANIFESTED, 40.0)
+			env_tension = 0.35
+
+		9: # Sector: Crawlspace low troffer threshold
+			player.global_position = Vector3(22.0, 0.05, -23.5)
+			observer.global_position = Vector3(36.0, 0.015, -23.5)
+			_debug_align_player_to(observer.global_position)
+			observer.look_at(player.global_position, Vector3.UP)
+			observer.visible = true
+			_apply_observer_pose(&"slump")
+			_set_observer_state(ObserverState.PRESSURE, 40.0)
+			env_tension = 0.60
+
+		10: # Sector: SW Archive heavy atmosphere
+			player.global_position = Vector3(-37.0, 0.05, 45.0)
+			observer.global_position = Vector3(-44.0, 0.015, 45.0)
+			_debug_align_player_to(observer.global_position)
+			observer.look_at(player.global_position, Vector3.UP)
+			observer.visible = true
+			_apply_observer_pose(&"peek_right")
+			_set_observer_state(ObserverState.MANIFESTED, 40.0)
+			env_tension = 0.45
+
+	_update_presence_shader()
 	return debug_observer_snapshot()
 
 func debug_observer_snapshot() -> Dictionary:
@@ -2861,10 +3389,14 @@ func debug_observer_snapshot() -> Dictionary:
 		"timer": snappedf(observer_state_timer, 0.01),
 		"visible": observer != null and observer.visible,
 		"variant": String(observer_variant),
+		"pose": String(observer_pose_variant),
 		"marker": observer_marker_index,
 		"escalation": snappedf(observer_escalation, 0.001),
 		"dread": snappedf(observer_dread, 0.001),
 		"composure": snappedf(observer_composure, 0.001),
+		"env_tension": snappedf(env_tension, 0.001),
+		"silence_intensity": snappedf(silence_intensity, 0.001),
+		"sector": String(current_player_sector),
 		"encounters": observer_encounters,
 		"attack_charge": snappedf(observer_attack_charge, 0.001),
 		"learned_gaze": snappedf(observer_learned_gaze, 0.001),
@@ -2896,6 +3428,7 @@ func _update_presence_shader() -> void:
 		hud_atmosphere_material.set_shader_parameter("proximity", clampf(observer_proximity_signal, 0.0, 1.0))
 		hud_atmosphere_material.set_shader_parameter("capture", capture_signal)
 		hud_atmosphere_material.set_shader_parameter("capture_phase", clampf(observer_capture_phase / 1.65, 0.0, 1.0))
+		hud_atmosphere_material.set_shader_parameter("silence", clampf(silence_intensity, 0.0, 1.0))
 
 func _build_hud() -> void:
 	var layer := CanvasLayer.new()
@@ -2912,13 +3445,14 @@ func _build_hud() -> void:
 	shader.code = """shader_type canvas_item;
 uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_linear_mipmap;
 uniform float vignette_intensity : hint_range(0.0, 2.5) = 1.15;
-uniform float vignette_opacity : hint_range(0.0, 1.0) = 0.24;
+uniform float vignette_opacity : hint_range(0.0, 1.0) = 0.22;
 uniform float presence : hint_range(0.0, 1.0) = 0.0;
 uniform float danger : hint_range(0.0, 1.0) = 0.0;
 uniform float exposure : hint_range(0.0, 1.0) = 0.0;
 uniform float proximity : hint_range(0.0, 1.0) = 0.0;
 uniform float capture : hint_range(0.0, 1.0) = 0.0;
 uniform float capture_phase : hint_range(0.0, 1.0) = 0.0;
+uniform float silence : hint_range(0.0, 1.0) = 0.0;
 
 float hash(vec2 p) {
 	return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
@@ -2931,40 +3465,61 @@ float noise_line(float line, float frame) {
 void fragment() {
 	vec2 uv = SCREEN_UV;
 	vec2 px = SCREEN_PIXEL_SIZE;
-	float threat = clamp(presence * 0.18 + danger * 0.50 + exposure * 0.64 + proximity * 0.32 + capture * 1.15, 0.0, 1.0);
-	float nonlinear = smoothstep(0.025, 0.94, threat);
-	float frame = floor(TIME * (18.0 + threat * 22.0));
+
+	// Distant sightings remain completely crisp and clean.
+	// Distortion and tearing only emerge under prolonged direct gaze, extreme proximity, or capture.
+	float gaze_threat = smoothstep(0.35, 1.0, exposure);
+	float close_threat = smoothstep(0.24, 1.0, proximity);
+	float active_threat = clamp(gaze_threat * 0.65 + close_threat * 0.75 + capture * 1.4, 0.0, 1.0);
+
+	float frame = floor(TIME * (16.0 + active_threat * 24.0));
 	float line = floor(FRAGCOORD.y);
 	float line_noise = noise_line(line, frame);
-	float tear_gate = step(0.72 - capture * 0.30, line_noise);
-	float tear_band = smoothstep(0.0, 1.0, sin(FRAGCOORD.y * 0.031 + TIME * (2.0 + danger * 4.0)) * 0.5 + 0.5);
-	float tear = (line_noise - 0.5) * px.x * (1.2 + nonlinear * 8.0 + capture * 16.0) * tear_gate * tear_band;
-	float wobble = sin(FRAGCOORD.y * 0.11 + TIME * 27.0) * px.x * nonlinear * 0.65;
-	vec2 warped_uv = uv + vec2(tear + wobble, sin(TIME * 4.0 + uv.x * 8.0) * px.y * nonlinear * 0.32);
-	float chroma = px.x * (nonlinear * 0.9 + capture * 3.4);
+
+	// Tearing only activates when gaze or close threat threshold is crossed
+	float tear_gate = step(0.78 - capture * 0.40, line_noise) * step(0.12, active_threat);
+	float tear_band = smoothstep(0.0, 1.0, sin(FRAGCOORD.y * 0.028 + TIME * (2.0 + danger * 4.0)) * 0.5 + 0.5);
+	float tear = (line_noise - 0.5) * px.x * (active_threat * 7.5 + capture * 18.0) * tear_gate * tear_band;
+
+	// Subtle horizontal sync drift under gaze
+	float sync_drift = sin(FRAGCOORD.y * 0.08 + TIME * 18.0) * px.x * gaze_threat * 0.45;
+	// Capture vertical roll / frame drop
+	float capture_v_roll = capture * sin(TIME * 32.0 + line * 0.02) * px.y * 2.8;
+
+	vec2 warped_uv = uv + vec2(tear + sync_drift, capture_v_roll);
+	float chroma = px.x * (close_threat * 0.85 + capture * 3.5);
+
 	vec3 scene;
 	scene.r = textureLod(screen_texture, warped_uv + vec2(chroma, 0.0), 0.0).r;
 	scene.g = textureLod(screen_texture, warped_uv, 0.0).g;
-	scene.b = textureLod(screen_texture, warped_uv - vec2(chroma * 0.72, 0.0), 0.0).b;
+	scene.b = textureLod(screen_texture, warped_uv - vec2(chroma * 0.75, 0.0), 0.0).b;
 
+	// Subtle grain and scan instability under active threat
 	float grain = hash(FRAGCOORD.xy + vec2(frame * 13.0, frame * 3.0)) - 0.5;
-	float static_amount = pow(nonlinear, 1.65) * 0.095 + capture * (0.20 + 0.16 * smoothstep(0.15, 0.85, capture_phase));
-	float scan = sin(FRAGCOORD.y * 1.55 + TIME * (9.0 + threat * 23.0)) * 0.5 + 0.5;
-	float scan_amount = (0.006 + nonlinear * 0.022 + capture * 0.035) * scan;
-	float exposure_pulse = sin(TIME * (3.0 + danger * 9.0) + sin(TIME * 1.7)) * (0.012 + nonlinear * 0.045 + capture * 0.08);
+	float static_amount = pow(active_threat, 2.2) * 0.08 + capture * (0.24 + 0.18 * smoothstep(0.15, 0.85, capture_phase));
+	float scan = sin(FRAGCOORD.y * 1.45 + TIME * (8.0 + active_threat * 20.0)) * 0.5 + 0.5;
+	float scan_amount = (active_threat * 0.022 + capture * 0.038) * scan;
+
+	// Exposure pulse during close pressure and capture
+	float exposure_pulse = sin(TIME * (3.5 + danger * 8.0)) * (active_threat * 0.04 + capture * 0.10);
+
+	// Desaturation / contrast drain under threat
 	vec3 mono = vec3(dot(scene, vec3(0.27, 0.63, 0.10)));
-	vec3 corrupted = mix(scene, mono * vec3(0.82, 0.88, 0.82), nonlinear * 0.18 + capture * 0.26);
+	vec3 corrupted = mix(scene, mono * vec3(0.84, 0.88, 0.82), active_threat * 0.18 + capture * 0.32);
 	corrupted += vec3(grain * static_amount) + vec3(scan_amount * 0.30, scan_amount * 0.42, scan_amount * 0.34);
 	corrupted *= 1.0 + exposure_pulse;
-	vec3 static_color = vec3(0.54 + grain * 0.55, 0.58 + grain * 0.48, 0.53 + grain * 0.58);
-	corrupted = mix(corrupted, static_color, clamp(static_amount, 0.0, 0.46));
 
+	// Vignette (slightly tightens during silence or proximity)
 	vec2 centered_uv = UV - vec2(0.5);
-	float vignette = smoothstep(0.34, 0.82, length(centered_uv) * vignette_intensity);
-	float pulse = pow(max(0.0, sin(TIME * (3.8 + danger * 8.5) + capture_phase * 7.0)), 8.0) * (danger * 0.16 + capture * 0.36);
-	corrupted *= 1.0 - vignette * (vignette_opacity + nonlinear * 0.11 + capture * 0.16);
-	corrupted = mix(corrupted, vec3(0.015, 0.018, 0.014), pulse);
-	float blend_amount = clamp(nonlinear * 0.86 + capture * 0.18, 0.0, 0.98);
+	float vig_boost = vignette_opacity + silence * 0.08 + active_threat * 0.12 + capture * 0.22;
+	float vignette = smoothstep(0.32, 0.84, length(centered_uv) * vignette_intensity);
+	corrupted *= 1.0 - vignette * vig_boost;
+
+	// Capture blackout pulse
+	float capture_blackout = pow(max(0.0, sin(TIME * 8.5 + capture_phase * 7.0)), 6.0) * capture * 0.55;
+	corrupted = mix(corrupted, vec3(0.012, 0.014, 0.010), capture_blackout);
+
+	float blend_amount = clamp(active_threat * 0.82 + capture * 0.24, 0.0, 0.98);
 	COLOR = vec4(mix(scene, corrupted, blend_amount), 1.0);
 }
 """

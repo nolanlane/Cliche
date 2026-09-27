@@ -810,8 +810,9 @@ func apply_observer_strike(severity: float, away_direction: Vector3) -> void:
 func reset_after_observer_collapse(safe_position: Vector3) -> void:
 	global_position = safe_position
 	velocity = Vector3.ZERO
-	observer_shock = 1.25
+	observer_shock = 1.35
 	observer_stagger = 1.0
+	landing_dip = 0.055
 	lighter_fuel = maxf(0.0, lighter_fuel - 22.0)
 	unequip_lighter()
 
