@@ -118,6 +118,13 @@ var footstep_strength := 0.7
 var footstep_pitch := 82.0
 var footstep_cycle_index := -1
 
+# Observer feedback is intentionally diegetic: balance loss, a reluctant flame,
+# and narrowed movement communicate danger without adding a conventional health bar.
+var observer_pressure := 0.0
+var observer_shock := 0.0
+var observer_stagger := 0.0
+var observer_shock_phase := 0.0
+
 func _ready() -> void:
 	add_to_group("player")
 	_setup_input_map()
@@ -611,6 +618,12 @@ func unequip_lighter() -> void:
 
 func _process(delta: float) -> void:
 	elapsed += delta
+	observer_shock = move_toward(observer_shock, 0.0, delta * 0.42)
+	observer_stagger = move_toward(observer_stagger, 0.0, delta * 0.34)
+	observer_shock_phase += delta * (13.0 + observer_pressure * 8.0)
+	if camera != null:
+		var target_fov := 74.0 - observer_pressure * 1.35 + sin(observer_shock_phase * 0.37) * observer_shock * 1.1
+		camera.fov = lerpf(camera.fov, target_fov, delta * 4.0)
 	_update_lighter_animation(delta)
 	_fill_lighter_audio()
 	_fill_footstep_audio()
@@ -715,6 +728,10 @@ func _update_lighter_animation(delta: float) -> void:
 				var sputter_chance := 0.22 if lighter_fuel < 10.0 else 0.10
 				if randf() < sputter_chance:
 					sputter = randf_range(0.20, 0.65)
+			elif observer_pressure > 0.48 and randf() < observer_pressure * delta * 1.8:
+				# Sparse pressure sputters warn that the pursuit phase is close, but the
+				# lighter remains useful as a deliberate counterplay tool.
+				sputter = randf_range(0.45, 0.82)
 			
 			flame_light.light_energy = (1.70 + flicker) * sputter
 			flame_light.light_color = Color("#ff9933")
@@ -772,6 +789,26 @@ func add_fuel(amount: float) -> void:
 		else:
 			lighter_state = LighterState.UNEQUIPPED
 
+func set_observer_pressure(amount: float) -> void:
+	observer_pressure = clampf(amount, 0.0, 1.0)
+
+func apply_observer_strike(severity: float, away_direction: Vector3) -> void:
+	observer_shock = maxf(observer_shock, clampf(0.75 + severity * 0.45, 0.0, 1.25))
+	observer_stagger = maxf(observer_stagger, clampf(0.65 + severity * 0.40, 0.0, 1.0))
+	if away_direction.length_squared() > 0.001:
+		velocity += away_direction.normalized() * (1.6 + severity * 1.2)
+	velocity.y = maxf(velocity.y, 1.0)
+	lighter_fuel = maxf(0.0, lighter_fuel - lerpf(8.0, 16.0, severity))
+	unequip_lighter()
+
+func reset_after_observer_collapse(safe_position: Vector3) -> void:
+	global_position = safe_position
+	velocity = Vector3.ZERO
+	observer_shock = 1.25
+	observer_stagger = 1.0
+	lighter_fuel = maxf(0.0, lighter_fuel - 22.0)
+	unequip_lighter()
+
 func _physics_process(delta: float) -> void:
 	var on_floor := is_on_floor()
 
@@ -820,6 +857,8 @@ func _physics_process(delta: float) -> void:
 		target_speed = crouch_speed
 	elif wants_sprint and input_2d.y < 0.0:
 		target_speed = sprint_speed
+	var threat_slow := clampf(observer_pressure * 0.12 + observer_stagger * 0.30, 0.0, 0.38)
+	target_speed *= 1.0 - threat_slow
 
 	# Kinematics & Friction
 	var current_horizontal := Vector3(velocity.x, 0.0, velocity.z)
@@ -893,7 +932,7 @@ func _physics_process(delta: float) -> void:
 	var strafe_input := input_2d.x
 	target_roll = deg_to_rad(-strafe_input * strafe_tilt_angle)
 	current_roll = lerp(current_roll, target_roll, delta * 8.0)
-	camera.rotation.z = current_roll
+	camera.rotation.z = current_roll + sin(observer_shock_phase) * observer_shock * 0.035
 
 	# Landing dip recovery
 	landing_dip = lerp(landing_dip, 0.0, delta * 12.0)
@@ -901,7 +940,8 @@ func _physics_process(delta: float) -> void:
 	# Final head positioning
 	var target_head_y := current_cam_height + bob_offset.y - landing_dip
 	head.position.y = lerp(head.position.y, target_head_y, delta * 24.0)
-	head.position.x = lerp(head.position.x, bob_offset.x, delta * 18.0)
+	var shock_offset := sin(observer_shock_phase * 0.73) * observer_shock * 0.026
+	head.position.x = lerp(head.position.x, bob_offset.x + shock_offset, delta * 18.0)
 
 const MAX_STEP_HEIGHT := 0.42
 
