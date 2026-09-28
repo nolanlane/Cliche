@@ -9,6 +9,7 @@ uniform float proximity : hint_range(0.0, 1.0) = 0.0;
 uniform float capture : hint_range(0.0, 1.0) = 0.0;
 uniform float capture_phase : hint_range(0.0, 1.0) = 0.0;
 uniform float silence : hint_range(0.0, 1.0) = 0.0;
+uniform float base_grain : hint_range(0.0, 0.1) = 0.012;
 
 float hash(vec2 p) {
 	return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
@@ -49,6 +50,13 @@ void fragment() {
 	scene.r = textureLod(screen_texture, warped_uv + vec2(chroma, 0.0), 0.0).r;
 	scene.g = textureLod(screen_texture, warped_uv, 0.0).g;
 	scene.b = textureLod(screen_texture, warped_uv - vec2(chroma * 0.75, 0.0), 0.0).b;
+
+	// Found-footage base grade: subtle grain + faint scanline at all times, even
+	// at rest. Threat distortion builds on top of this instead of from clean.
+	float base_frame = floor(TIME * 24.0);
+	float base_grain_n = hash(FRAGCOORD.xy + vec2(base_frame * 7.0, base_frame * 3.0)) - 0.5;
+	float base_scan = sin(FRAGCOORD.y * 1.45 + TIME * 8.0) * 0.5 + 0.5;
+	scene += vec3(base_grain_n * base_grain + base_scan * 0.006);
 
 	// Subtle grain and scan instability under active threat
 	float grain = hash(FRAGCOORD.xy + vec2(frame * 13.0, frame * 3.0)) - 0.5;

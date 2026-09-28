@@ -19,7 +19,10 @@ var head_target := Vector3.ZERO
 var head_timer := 2.4
 var turn_lag := 0.0
 var previous_yaw := 0.0
-
+# Statue mode: 0 = fully alive, 1 = perfectly frozen. Driven by main.gd from the
+# player's gaze signal — the Observer holds still while watched from a distance.
+var statue_target := 0.0
+var statue_blend := 0.0
 func _ready() -> void:
 	skin = ShaderMaterial.new()
 	skin.shader = preload("res://shaders/observer_flesh.gdshader")
@@ -41,28 +44,37 @@ func get_skin_material() -> ShaderMaterial:
 func set_pose_variant(value: StringName) -> void:
 	pose_variant = value
 
+func set_statue_target(value: float) -> void:
+	statue_target = clampf(value, 0.0, 1.0)
+
 func update_pose(delta: float, speed: float, threat: float, attacking: bool, crouch := 0.0) -> void:
-	age += delta
-	motion = move_toward(motion, clampf(speed / 0.35, 0.0, 1.0), delta * 3.5)
-	run_blend = move_toward(run_blend, smoothstep(1.6, 3.5, speed), delta * 2.0)
+	# Statue mode freezes every age-driven micro-motion (breath, head wander,
+	# stance sway) and the gait cycle. The body still faces its target — a
+	# motionless figure tracking you is the point.
+	statue_blend = move_toward(statue_blend, statue_target, delta * 2.2)
+	var live := 1.0 - statue_blend
+	var adelta := delta * live
+	age += adelta
+	motion = move_toward(motion, clampf(speed * live / 0.35, 0.0, 1.0), delta * 3.5)
+	run_blend = move_toward(run_blend, smoothstep(1.6, 3.5, speed), adelta * 2.0)
 	var stride_length := lerpf(1.25, 1.9, run_blend)
-	phase += delta * maxf(speed, 0.0) * TAU / (stride_length * MODEL_SCALE)
-	crouch_blend = move_toward(crouch_blend, crouch, delta * 7.0)
+	phase += adelta * maxf(speed, 0.0) * TAU / (stride_length * MODEL_SCALE)
+	crouch_blend = move_toward(crouch_blend, crouch, adelta * 7.0)
 	var stride := sin(phase)
-	var breath := sin(age * 1.15) * 0.007
+	var breath := sin(age * 0.9) * 0.004
 	var yaw_delta := angle_difference(previous_yaw, rotation.y)
 	previous_yaw = rotation.y
-	turn_lag = lerpf(turn_lag - yaw_delta, 0.0, minf(delta * 4.0, 1.0))
+	turn_lag = lerpf(turn_lag - yaw_delta, 0.0, minf(adelta * 4.0, 1.0))
 	turn_lag = clampf(turn_lag, -0.24, 0.24)
-	head_timer -= delta
+	head_timer -= adelta
 	if head_timer <= 0.0:
 		# A held look, then a small late correction. No constant metronomic head bob.
-		head_timer = 2.8 + fposmod(age * 1.73, 3.7)
-		head_target = Vector3(sin(age * 0.37) * 0.038, sin(age * 0.63) * 0.055, sin(age * 1.19) * 0.09)
-	head_angle = head_angle.lerp(head_target, minf(delta * (5.0 if threat > 0.6 else 2.8), 1.0))
+		head_timer = 4.2 + fposmod(age * 1.1, 5.0)
+		head_target = Vector3(sin(age * 0.29) * 0.02, sin(age * 0.47) * 0.03, sin(age * 0.83) * 0.05)
+	head_angle = head_angle.lerp(head_target, minf(adelta * (5.0 if threat > 0.6 else 2.8), 1.0))
 	stance.scale.y = lerpf(1.0, 0.88, crouch_blend)
 	stance.position.y = (-0.08 - run_blend * 0.045 + absf(sin(phase * 2.0)) * 0.012) * motion
-	stance.rotation = Vector3(0.0, 0.0, -0.012 + sin(age * 0.31) * 0.007 * (1.0 - motion))
+	stance.rotation = Vector3(0.0, 0.0, -0.012 + sin(age * 0.24) * 0.004 * (1.0 - motion))
 	_pose("Spine", Vector3(-0.018 - run_blend * 0.11 - crouch_blend * 0.10 + breath, turn_lag * 0.65, -0.028 - stride * 0.014 * motion))
 	_pose("Neck", Vector3(0.025 + run_blend * 0.075, -turn_lag * 0.45, -0.045))
 	_pose("Head", head_angle + Vector3(-0.025, -turn_lag * 0.55, 0.072))
@@ -70,15 +82,15 @@ func update_pose(delta: float, speed: float, threat: float, attacking: bool, cro
 	_leg("R", phase + PI, stride_length)
 	var reach := 1.16 if attacking else threat * 0.055
 	# Arms lag the legs, with unequal reach and very little normal human arm swing.
-	_pose("ArmL", Vector3(-sin(phase - 0.45) * 0.12 * motion + reach, turn_lag * 0.2, 0.04))
-	_pose("ArmR", Vector3(sin(phase - 0.72) * 0.085 * motion + reach * 0.91, -turn_lag * 0.15, 0.045))
+	_pose("ArmL", Vector3(-sin(phase - 0.45) * 0.07 * motion + reach, turn_lag * 0.2, 0.04))
+	_pose("ArmR", Vector3(sin(phase - 0.72) * 0.05 * motion + reach * 0.91, -turn_lag * 0.15, 0.045))
 	_pose("ForearmL", Vector3(0.07 + threat * 0.12, 0.07, 0.035))
 	_pose("ForearmR", Vector3(0.015 + threat * 0.10, -0.04, -0.025))
-	_pose("HandL", Vector3(-0.045 + sin(age * 0.61) * 0.025, 0.03, 0.0))
+	_pose("HandL", Vector3(-0.045 + sin(age * 0.61) * 0.01, 0.03, 0.0))
 	_pose("HandR", Vector3(0.018, -0.035, 0.025))
 	for side in ["L", "R"]:
 		for index in range(5):
-			_pose("Finger" + side + str(index), Vector3(threat * 0.075 + sin(age * 0.63 + index * 0.75) * 0.018, 0, 0))
+			_pose("Finger" + side + str(index), Vector3(threat * 0.075 + sin(age * 0.5 + index * 0.75) * 0.004, 0, 0))
 
 func _leg(side: String, cycle: float, stride_length: float) -> void:
 	if skeleton == null: return
@@ -92,7 +104,7 @@ func _leg(side: String, cycle: float, stride_length: float) -> void:
 	else:
 		var swing := (t - duty) / (1.0 - duty)
 		foot_z = lerpf(travel * 0.5, -travel * 0.5, smoothstep(0.0, 1.0, swing))
-		lift = sin(swing * PI) * lerpf(0.105, 0.21, run_blend)
+		lift = sin(swing * PI) * lerpf(0.06, 0.14, run_blend)
 	var hip: Vector3 = global_rests["Thigh" + side].origin
 	var knee_rest: Vector3 = global_rests["Shin" + side].origin
 	var ankle_rest: Vector3 = global_rests["Foot" + side].origin

@@ -527,6 +527,27 @@ func _apply_observer_pose(variant: StringName) -> void:
 	if observer != null and observer.has_method("set_pose_variant"):
 		observer.call("set_pose_variant", variant)
 
+# Hesitation behavior: while the player holds the Observer in view from a
+# distance, it holds almost perfectly still — caught mid-creep. The stillness
+# persists into early PRESSURE and releases as the attack charge builds: the
+# moment it starts moving while you are still watching is the cue to run.
+# Returns 0..1.
+func _observer_statue_target() -> float:
+	if observer == null or player == null:
+		return 0.0
+	if not observer.visible:
+		return 0.0
+	var statue_dist := player.global_position.distance_to(observer.global_position)
+	# Full hold only past ~6.5 m; close encounters stay alive and threatening.
+	var gaze_hold := clampf(observer_exposure_signal, 0.0, 1.0) * smoothstep(3.5, 6.5, statue_dist)
+	match observer_state:
+		ObserverState.OBSERVING, ObserverState.MANIFESTED:
+			return gaze_hold
+		ObserverState.PRESSURE:
+			return gaze_hold * (1.0 - clampf(observer_attack_charge, 0.0, 1.0))
+		_:
+			return 0.0
+
 func _update_observer_presence(delta: float) -> void:
 	if observer == null or player == null:
 		return
@@ -571,6 +592,8 @@ func _update_observer_presence(delta: float) -> void:
 	var actual_speed := observer.global_position.distance_to(previous_position) / maxf(delta, 0.001)
 	var crouch := 0.0 if observer_navigation.clearance(observer.global_position, 2.30) and observer_navigation.clearance(observer.global_position - observer.global_basis.z * 0.7, 2.30) else 1.0
 	observer.update_pose(delta, minf(actual_speed, 5.0), observer_attack_charge if observer_state == ObserverState.PRESSURE else observer_feedback, observer_state == ObserverState.CAPTURE, crouch)
+	if observer.has_method("set_statue_target"):
+		observer.call("set_statue_target", _observer_statue_target())
 	observer_audio.set_threat(observer_presence if observer.visible else 0.0, actual_speed, observer_state in [ObserverState.PRESSURE, ObserverState.PURSUIT, ObserverState.CAPTURE])
 	if player.has_method("set_observer_pressure"):
 		player.set_observer_pressure(clampf(maxf(observer_feedback * 0.82, maxf(observer_dread * 0.55, observer_screen_threat * 0.72)), 0.0, 1.0))
@@ -689,9 +712,11 @@ func _update_observer_manifested(delta: float, camera_node: Camera3D) -> void:
 	_update_observer_exposure(delta, has_sight, view_dot, distance)
 	observer_presence = move_toward(observer_presence, 1.0, delta * 0.85)
 	_face_observer(player.global_position, delta)
-	# A first readable silhouette, then purposeful movement. Looking buys time.
+	# A first readable silhouette, then purposeful movement. Looking buys time —
+	# a watched Observer from a distance hesitates, holding almost still.
 	if observer_encounter_age > 2.8:
 		var stalk_speed := 0.28 if has_sight and view_dot > 0.82 else 1.25
+		stalk_speed *= 1.0 - _observer_statue_target()
 		_move_observer_toward(player.global_position, stalk_speed, delta)
 	if observer_encounter_age > 3.5 and (distance < 7.5 or observer_centered_time > 2.2 or observer_encounter_age > 10.0):
 		_set_observer_state(ObserverState.PRESSURE, 1.8)
@@ -1099,7 +1124,6 @@ func _update_presence_shader() -> void:
 		hud_atmosphere_material.set_shader_parameter("capture", capture_signal)
 		hud_atmosphere_material.set_shader_parameter("capture_phase", clampf(observer_capture_phase, 0.0, 1.0))
 		hud_atmosphere_material.set_shader_parameter("silence", clampf(silence_intensity, 0.0, 1.0))
-
 func _show_hud_toast(msg: String) -> void:
 	if hud_toast_label == null or hud_toast_container == null:
 		return

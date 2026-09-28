@@ -3,6 +3,8 @@ render_mode cull_back, depth_draw_opaque, diffuse_burley, specular_schlick_ggx;
 
 uniform float presence : hint_range(0.0, 1.0) = 1.0;
 uniform float threat : hint_range(0.0, 1.0) = 0.0;
+uniform vec3 rim_color : source_color = vec3(0.12, 0.17, 0.23);
+uniform float rim_strength : hint_range(0.0, 1.0) = 0.55;
 
 float hash21(vec2 p) {
 	p = fract(p * vec2(123.34, 456.21));
@@ -33,4 +35,7 @@ void fragment() {
 	ROUGHNESS = mix(0.70, 0.51, grazing) - threat * 0.035;
 	METALLIC = 0.0;
 	SPECULAR = 0.36;
+	// Self-lit grazing edge separates the Observer from dark rooms without
+	// casting any light onto walls or leaking around corners.
+	EMISSION = rim_color * grazing * rim_strength * smoothstep(0.02, 0.55, presence);
 }

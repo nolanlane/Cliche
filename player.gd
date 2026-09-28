@@ -100,6 +100,8 @@ const VM_BASE_ROT := Vector3(0.12, -0.24, -0.06)
 var mouse_input_accum := Vector2.ZERO
 var sway_pos := Vector3.ZERO
 var sway_rot := Vector3.ZERO
+# Handheld camera micro-tremor phase (found-footage feel)
+var tremor_phase := 0.0
 
 # Procedural Audio for Lighter
 var audio_player: AudioStreamPlayer
@@ -945,7 +947,15 @@ func _physics_process(delta: float) -> void:
 	var strafe_input := input_2d.x
 	target_roll = deg_to_rad(-strafe_input * strafe_tilt_angle)
 	current_roll = lerp(current_roll, target_roll, delta * 8.0)
-	camera.rotation.z = current_roll + sin(observer_shock_phase) * observer_shock * 0.035
+	# Handheld micro-tremor: idle breathing sway is always on (found-footage
+	# feel); observer pressure amplifies it into visible shaking.
+	tremor_phase += delta * (1.0 + observer_pressure * 2.2)
+	var tremor_amp := 0.0016 + observer_pressure * 0.007
+	var tremor_x := (sin(tremor_phase * 1.9) * 0.6 + sin(tremor_phase * 4.3 + 1.3) * 0.4) * tremor_amp
+	var tremor_y := (sin(tremor_phase * 2.2 + 0.7) * 0.6 + sin(tremor_phase * 4.9 + 2.1) * 0.4) * tremor_amp
+	camera.rotation.x = pitch + tremor_x
+	camera.rotation.y = tremor_y
+	camera.rotation.z = current_roll + sin(observer_shock_phase) * observer_shock * 0.035 + sin(tremor_phase * 1.5 + 0.4) * tremor_amp * 0.7
 
 	# Landing dip recovery
 	landing_dip = lerp(landing_dip, 0.0, delta * 12.0)
