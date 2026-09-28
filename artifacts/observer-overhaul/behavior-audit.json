@@ -1,0 +1,34 @@
+{
+  "corner_route_end_distance": 0.157622128725052,
+  "corner_route_points": 40,
+  "crawlspace_refuge": true,
+  "escape_state": "DISENGAGING",
+  "failures": [
+    "Sump route crosses floor elevations",
+    "Creature descends the sump ramp"
+  ],
+  "idle_capture_seconds": [
+    17.6666666666667,
+    16.7,
+    16.7,
+    16.7,
+    17.6666666666667,
+    17.6666666666667
+  ],
+  "low_door_traversed": true,
+  "natural_appearance_seconds": [
+    7.8,
+    7.8,
+    7.8,
+    7.8,
+    7.8,
+    7.8
+  ],
+  "navigation_cells": 21297,
+  "pass": false,
+  "sump_route_end_distance": 28.1579475402832,
+  "wall_contact_positions": [
+    "(-15.0, 0.018, -14.5)",
+    "(-15.0, 0.018, -13.52)"
+  ]
+}

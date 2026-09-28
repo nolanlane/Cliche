@@ -1,0 +1,416 @@
+{
+  "failures": [],
+  "fixtures": 89,
+  "pass": true,
+  "reachable_cells": 39393,
+  "targets": [
+    {
+      "at": [
+        -4.19999980926514,
+        1.0900000333786,
+        0.800000011920929
+      ],
+      "distance": 0.44721332192421,
+      "kind": "fuel_can",
+      "name": "FuelCan_ReceptionCounter",
+      "ok": true
+    },
+    {
+      "at": [
+        -3.5,
+        0.119999997317791,
+        -29.5
+      ],
+      "distance": 0.141421556472778,
+      "kind": "fuel_can",
+      "name": "FuelCan_NorthZTurn",
+      "ok": true
+    },
+    {
+      "at": [
+        -11.6999998092651,
+        0.119999997317791,
+        -49.0
+      ],
+      "distance": 0.22360722720623,
+      "kind": "fuel_can",
+      "name": "FuelCan_NorthPocketDeadEnd",
+      "ok": true
+    },
+    {
+      "at": [
+        15.8000001907349,
+        0.119999997317791,
+        -20.0
+      ],
+      "distance": 0.199999809265137,
+      "kind": "fuel_can",
+      "name": "FuelCan_EastCorridor",
+      "ok": true
+    },
+    {
+      "at": [
+        -36.9000015258789,
+        0.119999997317791,
+        7.09999990463257
+      ],
+      "distance": 0.141423583030701,
+      "kind": "fuel_can",
+      "name": "FuelCan_PillarForest",
+      "ok": true
+    },
+    {
+      "at": [
+        -20.5,
+        0.119999997317791,
+        2.0
+      ],
+      "distance": 0.100000381469727,
+      "kind": "fuel_can",
+      "name": "FuelCan_WestJunction",
+      "ok": true
+    },
+    {
+      "at": [
+        33.0,
+        0.119999997317791,
+        -29.0
+      ],
+      "distance": 0.282843798398972,
+      "kind": "fuel_can",
+      "name": "FuelCan_CrawlspaceAlcove",
+      "ok": true
+    },
+    {
+      "at": [
+        -13.0,
+        -1.08000004291534,
+        26.5
+      ],
+      "distance": 0.223606795072556,
+      "kind": "fuel_can",
+      "name": "FuelCan_SumpChamber",
+      "ok": true
+    },
+    {
+      "at": [
+        33.6500015258789,
+        0.119999997317791,
+        36.0
+      ],
+      "distance": 0.0500030517578125,
+      "kind": "fuel_can",
+      "name": "FuelCan_NowhereAlcove",
+      "ok": true
+    },
+    {
+      "at": [
+        -46.7999992370605,
+        0.119999997317791,
+        47.7999992370605
+      ],
+      "distance": 0.200000762939453,
+      "kind": "fuel_can",
+      "name": "FuelCan_SWArchiveDeadEnd",
+      "ok": true
+    },
+    {
+      "at": [
+        -2.0,
+        0.0,
+        -0.800000011920929
+      ],
+      "distance": 1.78813934326172e-07,
+      "kind": "observer_anchor",
+      "name": "CounterDoorShadow",
+      "ok": true
+    },
+    {
+      "at": [
+        2.40000009536743,
+        0.0,
+        -10.1000003814697
+      ],
+      "distance": 0.100000381469727,
+      "kind": "observer_anchor",
+      "name": "DoglegEnd",
+      "ok": true
+    },
+    {
+      "at": [
+        -13.0,
+        0.0,
+        -6.30000019073486
+      ],
+      "distance": 0.223606377840042,
+      "kind": "observer_anchor",
+      "name": "WestOfficeEdge",
+      "ok": true
+    },
+    {
+      "at": [
+        14.5,
+        0.0,
+        0.200000002980232
+      ],
+      "distance": 0.223606631159782,
+      "kind": "observer_anchor",
+      "name": "EastSuiteDepth",
+      "ok": true
+    },
+    {
+      "at": [
+        4.09999990463257,
+        0.0,
+        -22.75
+      ],
+      "distance": 0.111802972853184,
+      "kind": "observer_anchor",
+      "name": "SpineDoor101",
+      "ok": true
+    },
+    {
+      "at": [
+        7.90000009536743,
+        0.0,
+        -27.7000007629395
+      ],
+      "distance": 0.141421556472778,
+      "kind": "observer_anchor",
+      "name": "SpineDoor104",
+      "ok": true
+    },
+    {
+      "at": [
+        6.0,
+        0.0,
+        -33.4000015258789
+      ],
+      "distance": 0.199996948242188,
+      "kind": "observer_anchor",
+      "name": "FluorescentPerspective",
+      "ok": true
+    },
+    {
+      "at": [
+        0.0,
+        0.0,
+        -42.2999992370605
+      ],
+      "distance": 0.100002288818359,
+      "kind": "observer_anchor",
+      "name": "CentralTurnShadow",
+      "ok": true
+    },
+    {
+      "at": [
+        -5.40000009536743,
+        0.0,
+        -48.4000015258789
+      ],
+      "distance": 0.199999809265137,
+      "kind": "observer_anchor",
+      "name": "DeepEndVigil",
+      "ok": true
+    },
+    {
+      "at": [
+        -11.75,
+        0.0,
+        -46.0
+      ],
+      "distance": 0.149999618530273,
+      "kind": "observer_anchor",
+      "name": "WestPocketThreshold",
+      "ok": true
+    },
+    {
+      "at": [
+        -26.8999996185303,
+        0.0,
+        -5.19999980926514
+      ],
+      "distance": 0.30000114440918,
+      "kind": "observer_anchor",
+      "name": "EntryColumnEdge",
+      "ok": true
+    },
+    {
+      "at": [
+        -38.5999984741211,
+        0.0,
+        9.89999961853027
+      ],
+      "distance": 0.223604246973991,
+      "kind": "observer_anchor",
+      "name": "CentralPartitionEdge",
+      "ok": true
+    },
+    {
+      "at": [
+        -47.2000007629395,
+        0.0,
+        -15.5
+      ],
+      "distance": 0.100000381469727,
+      "kind": "observer_anchor",
+      "name": "WestGalleryDepth",
+      "ok": true
+    },
+    {
+      "at": [
+        -33.0,
+        0.0,
+        12.8999996185303
+      ],
+      "distance": 0.223607644438744,
+      "kind": "observer_anchor",
+      "name": "SouthGalleryDoor",
+      "ok": true
+    },
+    {
+      "at": [
+        -39.2000007629395,
+        0.0,
+        -17.2000007629395
+      ],
+      "distance": 0.0,
+      "kind": "observer_anchor",
+      "name": "NorthColumnSliver",
+      "ok": true
+    },
+    {
+      "at": [
+        -30.0,
+        0.0,
+        20.2000007629395
+      ],
+      "distance": 0.200000762939453,
+      "kind": "observer_anchor",
+      "name": "ArchiveApproach",
+      "ok": true
+    },
+    {
+      "at": [
+        14.5,
+        0.0,
+        -24.7000007629395
+      ],
+      "distance": 0.141420558094978,
+      "kind": "observer_anchor",
+      "name": "ServiceVestibuleShadow",
+      "ok": true
+    },
+    {
+      "at": [
+        16.7999992370605,
+        0.0,
+        -43.5
+      ],
+      "distance": 0.0999984741210938,
+      "kind": "observer_anchor",
+      "name": "ReturnHatchShadow",
+      "ok": true
+    },
+    {
+      "at": [
+        -7.0,
+        -1.20000004768372,
+        30.0
+      ],
+      "distance": 0.199999809265137,
+      "kind": "observer_anchor",
+      "name": "RampLandingEdge",
+      "ok": true
+    },
+    {
+      "at": [
+        -9.0,
+        -1.20000004768372,
+        40.0
+      ],
+      "distance": 0.199999809265137,
+      "kind": "observer_anchor",
+      "name": "PumpPortal",
+      "ok": true
+    },
+    {
+      "at": [
+        4.19999980926514,
+        -1.20000004768372,
+        45.7999992370605
+      ],
+      "distance": 0.282843112945557,
+      "kind": "observer_anchor",
+      "name": "ServiceBaffleEdge",
+      "ok": true
+    },
+    {
+      "at": [
+        33.6500015258789,
+        0.0,
+        36.4000015258789
+      ],
+      "distance": 0.0500030517578125,
+      "kind": "observer_anchor",
+      "name": "FirstDoorRecess",
+      "ok": true
+    },
+    {
+      "at": [
+        40.5499992370605,
+        0.0,
+        36.2999992370605
+      ],
+      "distance": 0.180276930332184,
+      "kind": "observer_anchor",
+      "name": "SecondDoorRecess",
+      "ok": true
+    },
+    {
+      "at": [
+        50.2999992370605,
+        0.0,
+        37.9500007629395
+      ],
+      "distance": 0.111805103719234,
+      "kind": "observer_anchor",
+      "name": "EndOfPerspective",
+      "ok": true
+    },
+    {
+      "at": [
+        -42.0,
+        0.0,
+        34.9000015258789
+      ],
+      "distance": 0.100002288818359,
+      "kind": "observer_anchor",
+      "name": "StacksSliver",
+      "ok": true
+    },
+    {
+      "at": [
+        -42.2000007629395,
+        0.0,
+        43.0999984741211
+      ],
+      "distance": 0.223608508706093,
+      "kind": "observer_anchor",
+      "name": "DeepRecordsThreshold",
+      "ok": true
+    },
+    {
+      "at": [
+        -28.0,
+        0.0,
+        38.4000015258789
+      ],
+      "distance": 0.0,
+      "kind": "observer_anchor",
+      "name": "ReadingRoomShadow",
+      "ok": true
+    }
+  ],
+  "walkable_cells": 58481
+}

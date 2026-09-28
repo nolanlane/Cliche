@@ -573,6 +573,7 @@ func _fill_lighter_audio() -> void:
 		audio_playback.push_frame(Vector2(sample, sample))
 
 func _unhandled_input(event: InputEvent) -> void:
+	if observer_capture_lock > 0.0: return
 	if event is InputEventMouseButton and event.pressed:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and observer_capture_lock <= 0.0:
@@ -893,7 +894,7 @@ func _physics_process(delta: float) -> void:
 
 		# Jump & Ground snapping
 		if Input.is_action_just_pressed("jump") or (Input.is_key_pressed(KEY_SPACE) and not wants_crouch):
-			if not is_crouching:
+			if not is_crouching and observer_capture_lock <= 0.0:
 				velocity.y = jump_velocity
 		else:
 			velocity.y = -0.2

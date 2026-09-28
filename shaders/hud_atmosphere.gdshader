@@ -26,7 +26,7 @@ void fragment() {
 	// Distortion and tearing only emerge under prolonged direct gaze, extreme proximity, or capture.
 	float gaze_threat = smoothstep(0.35, 1.0, exposure);
 	float close_threat = smoothstep(0.24, 1.0, proximity);
-	float active_threat = clamp(gaze_threat * 0.65 + close_threat * 0.75 + capture * 1.4, 0.0, 1.0);
+	float active_threat = clamp(gaze_threat * 0.20 + close_threat * 0.32 + capture * 1.4, 0.0, 1.0);
 
 	float frame = floor(TIME * (16.0 + active_threat * 24.0));
 	float line = floor(FRAGCOORD.y);
@@ -72,7 +72,7 @@ void fragment() {
 	corrupted *= 1.0 - vignette * vig_boost;
 
 	// Capture blackout pulse
-	float capture_blackout = pow(max(0.0, sin(TIME * 8.5 + capture_phase * 7.0)), 6.0) * capture * 0.55;
+	float capture_blackout = smoothstep(0.32, 0.64, capture_phase);
 	corrupted = mix(corrupted, vec3(0.012, 0.014, 0.010), capture_blackout);
 
 	float blend_amount = clamp(active_threat * 0.82 + capture * 0.24, 0.0, 0.98);

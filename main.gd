@@ -95,6 +95,15 @@ var observer_learned_approach := 0.0
 var observer_learned_flight := 0.0
 var observer_audio_phase := 0.0
 var observer_visited_sectors: Dictionary = {}
+var observer_navigation = preload("res://scripts/observer_navigation.gd").new()
+var observer_audio: AudioStreamPlayer3D
+var observer_route := PackedVector3Array()
+var observer_route_timer := 0.0
+var observer_last_known := Vector3.ZERO
+var observer_encounter_age := 0.0
+var observer_defeated := false
+var observer_capture_count := 0
+var observer_debug_hold := false
 var observer_debug_forced := false
 var observer_last_distance := 64.0
 var observer_last_view_dot := -1.0
@@ -149,6 +158,9 @@ func _ready() -> void:
 	randomize()
 	RenderingServer.set_default_clear_color(Color("#080805"))
 	_bind_scene_nodes()
+	observer_navigation.setup(get_world_3d(), player.get_rid())
+	observer_audio = preload("res://scripts/observer_audio.gd").new()
+	observer.add_child(observer_audio)
 	if player != null:
 		observer_last_player_position = player.global_position
 
@@ -163,18 +175,7 @@ func _bind_scene_nodes() -> void:
 	# 2. Observer binding
 	observer = get_node_or_null("Gameplay/Observer") as Node3D
 	if observer != null:
-		var coat := observer.get_node_or_null("Stance/Coat") as MeshInstance3D
-		if coat != null:
-			observer_material = coat.get_active_material(0) as ShaderMaterial
-			if observer_material == null and coat.mesh != null and coat.mesh.get_surface_count() > 0:
-				observer_material = coat.mesh.surface_get_material(0) as ShaderMaterial
-		var head := observer.get_node_or_null("Stance/Head") as MeshInstance3D
-		if head != null:
-			observer_head_material = head.material_override as StandardMaterial3D
-			if observer_head_material == null:
-				observer_head_material = head.get_active_material(0) as StandardMaterial3D
-				if observer_head_material == null and head.mesh != null and head.mesh.get_surface_count() > 0:
-					observer_head_material = head.mesh.surface_get_material(0) as StandardMaterial3D
+		observer_material = observer.get_skin_material()
 
 	# 3. HUD binding
 	var hud_layer := get_node_or_null("HUD") as CanvasLayer
@@ -256,7 +257,7 @@ func _bind_scene_nodes() -> void:
 		if not observer_markers.is_empty():
 			observer.position = observer_markers[0]
 		observer.visible = false
-		observer_hide_timer = randf_range(24.0, 38.0)
+		observer_hide_timer = randf_range(7.0, 10.0)
 		observer_state_timer = observer_hide_timer
 		observer_relocation_timer = 0.0
 		observer_sway_phase = randf_range(0.0, TAU)
@@ -377,7 +378,6 @@ func _process(delta: float) -> void:
 
 	_fill_audio_buffer()
 	_fill_spatial_ambience()
-	_update_observer_presence(delta)
 	_update_lighter_hud(delta)
 
 func _update_environmental_director(delta: float) -> void:
@@ -523,92 +523,9 @@ func _fill_spatial_ambience() -> void:
 		source["phase"] = phase
 
 func _apply_observer_pose(variant: StringName) -> void:
-	if observer == null:
-		return
-	var stance := observer.get_node_or_null("Stance")
-	if stance == null:
-		return
-	var head_node := stance.get_node_or_null("Head") as MeshInstance3D
-	var arm_l := stance.get_node_or_null("UpperArm_L") as MeshInstance3D
-	var arm_r := stance.get_node_or_null("UpperArm_R") as MeshInstance3D
-	var forearm_l := stance.get_node_or_null("Forearm_L") as MeshInstance3D
-	var forearm_r := stance.get_node_or_null("Forearm_R") as MeshInstance3D
-	var hand_l := stance.get_node_or_null("Hand_L") as MeshInstance3D
-	var hand_r := stance.get_node_or_null("Hand_R") as MeshInstance3D
-	var torso_node := stance.get_node_or_null("Torso") as MeshInstance3D
-
 	observer_pose_variant = variant
-	match variant:
-		&"slump":
-			if head_node:
-				head_node.rotation_degrees = Vector3(18.0, 4.0, -12.0)
-				head_node.position = Vector3(-0.065, 2.18, 0.06)
-			if torso_node:
-				torso_node.rotation_degrees = Vector3(6.0, 0.0, -4.5)
-			if arm_l:
-				arm_l.rotation_degrees = Vector3(12.0, 0.0, -14.0)
-			if arm_r:
-				arm_r.rotation_degrees = Vector3(4.0, 0.0, 6.0)
-			if forearm_l:
-				forearm_l.rotation_degrees = Vector3(14.0, 0.0, -8.0)
-			if forearm_r:
-				forearm_r.rotation_degrees = Vector3(6.0, 0.0, -2.0)
-
-		&"peek_left":
-			if head_node:
-				head_node.rotation_degrees = Vector3(-4.0, 24.0, 16.0)
-				head_node.position = Vector3(0.08, 2.26, -0.04)
-			if torso_node:
-				torso_node.rotation_degrees = Vector3(0.0, 12.0, 7.5)
-			if arm_l:
-				arm_l.rotation_degrees = Vector3(-2.0, 0.0, -4.0)
-			if arm_r:
-				arm_r.rotation_degrees = Vector3(14.0, 0.0, 18.0)
-
-		&"peek_right":
-			if head_node:
-				head_node.rotation_degrees = Vector3(-4.0, -24.0, -16.0)
-				head_node.position = Vector3(-0.12, 2.26, -0.04)
-			if torso_node:
-				torso_node.rotation_degrees = Vector3(0.0, -12.0, -7.5)
-			if arm_l:
-				arm_l.rotation_degrees = Vector3(14.0, 0.0, -18.0)
-			if arm_r:
-				arm_r.rotation_degrees = Vector3(-2.0, 0.0, 4.0)
-
-		&"narrow_vigil":
-			if head_node:
-				head_node.rotation_degrees = Vector3(-12.0, 0.0, 0.0)
-				head_node.position = Vector3(-0.045, 2.29, -0.025)
-			if torso_node:
-				torso_node.rotation_degrees = Vector3(-2.0, 0.0, 0.0)
-			if arm_l:
-				arm_l.rotation_degrees = Vector3(4.0, 0.0, -4.0)
-			if arm_r:
-				arm_r.rotation_degrees = Vector3(4.0, 0.0, 4.0)
-			if forearm_l:
-				forearm_l.rotation_degrees = Vector3(0.0, 0.0, 0.0)
-			if forearm_r:
-				forearm_r.rotation_degrees = Vector3(0.0, 0.0, 0.0)
-
-		_: # &"sentinel" default
-			if head_node:
-				head_node.rotation_degrees = Vector3(-7.0, 5.0, -2.5)
-				head_node.position = Vector3(-0.045, 2.27, -0.025)
-			if torso_node:
-				torso_node.rotation_degrees = Vector3(3.0, 0.0, -1.7)
-			if arm_l:
-				arm_l.rotation_degrees = Vector3(1.5, 0.0, 7.0)
-			if arm_r:
-				arm_r.rotation_degrees = Vector3(1.5, 0.0, 10.0)
-			if forearm_l:
-				forearm_l.rotation_degrees = Vector3(-2.0, 0.0, -4.0)
-			if forearm_r:
-				forearm_r.rotation_degrees = Vector3(-2.0, 0.0, -7.0)
-			if hand_l:
-				hand_l.rotation_degrees = Vector3(-5.0, 0.0, -3.0)
-			if hand_r:
-				hand_r.rotation_degrees = Vector3(-5.0, 0.0, -5.5)
+	if observer != null and observer.has_method("set_pose_variant"):
+		observer.call("set_pose_variant", variant)
 
 func _update_observer_presence(delta: float) -> void:
 	if observer == null or player == null:
@@ -631,17 +548,7 @@ func _update_observer_presence(delta: float) -> void:
 	if observer_state in [ObserverState.DORMANT, ObserverState.RECOVERY]:
 		observer_composure = minf(1.0, observer_composure + delta * 0.016)
 
-	var stance := observer.get_node_or_null("Stance") as Node3D
-	if stance != null:
-		var drift_scale := 0.42 if observer_state == ObserverState.PURSUIT else 1.0
-		if observer_state == ObserverState.CAPTURE:
-			stance.rotation_degrees.z = -2.0 + sin(observer_capture_phase * 14.0) * 1.8
-			stance.position.x = sin(observer_capture_phase * 9.0) * 0.018
-			stance.scale = Vector3.ONE * (1.0 + sin(observer_capture_phase * 11.0) * 0.018)
-		else:
-			stance.rotation_degrees.z = -1.15 + sin(elapsed * 0.23 + observer_sway_phase) * 0.16 * drift_scale
-			stance.position.x = sin(elapsed * 0.37 + observer_sway_phase) * 0.006 * drift_scale
-			stance.scale = Vector3.ONE
+	var previous_position := observer.global_position
 
 	match observer_state:
 		ObserverState.DORMANT:
@@ -661,6 +568,10 @@ func _update_observer_presence(delta: float) -> void:
 		ObserverState.RECOVERY:
 			_update_observer_recovery()
 
+	var actual_speed := observer.global_position.distance_to(previous_position) / maxf(delta, 0.001)
+	var crouch := 0.0 if observer_navigation.clearance(observer.global_position, 2.30) and observer_navigation.clearance(observer.global_position - observer.global_basis.z * 0.7, 2.30) else 1.0
+	observer.update_pose(delta, minf(actual_speed, 5.0), observer_attack_charge if observer_state == ObserverState.PRESSURE else observer_feedback, observer_state == ObserverState.CAPTURE, crouch)
+	observer_audio.set_threat(observer_presence if observer.visible else 0.0, actual_speed, observer_state in [ObserverState.PRESSURE, ObserverState.PURSUIT, ObserverState.CAPTURE])
 	if player.has_method("set_observer_pressure"):
 		player.set_observer_pressure(clampf(maxf(observer_feedback * 0.82, maxf(observer_dread * 0.55, observer_screen_threat * 0.72)), 0.0, 1.0))
 	_update_presence_shader()
@@ -737,7 +648,7 @@ func _update_observer_dormant() -> void:
 	observer.visible = false
 	observer_presence = move_toward(observer_presence, 0.0, 0.035)
 	if observer_state_timer <= 0.0:
-		_set_observer_state(ObserverState.OBSERVING, randf_range(5.0, 10.0))
+		_set_observer_state(ObserverState.OBSERVING, 0.8)
 
 func _update_observer_observing() -> void:
 	observer.visible = false
@@ -747,14 +658,16 @@ func _update_observer_observing() -> void:
 
 func _begin_observer_manifestation() -> void:
 	observer_variant = _choose_observer_variant()
-	var minimum := lerpf(27.0, 20.0, observer_escalation)
-	var maximum := lerpf(52.0, 38.0, observer_escalation)
-	if _place_observer_for_state(minimum, maximum, true):
+	if _place_observer_for_state(9.0, 22.0, false):
 		observer_encounters += 1
 		observer_manifest_steps = 0
-		_set_observer_state(ObserverState.MANIFESTED, randf_range(8.0, 13.5))
+		observer_encounter_age = 0.0
+		observer_last_known = player.global_position
+		observer_route.clear()
+		observer_route_timer = 0.0
+		_set_observer_state(ObserverState.MANIFESTED, 18.0)
 	else:
-		_set_observer_state(ObserverState.OBSERVING, randf_range(5.0, 9.0))
+		_set_observer_state(ObserverState.OBSERVING, 0.8)
 
 func _choose_observer_variant() -> StringName:
 	var roll := randf()
@@ -768,184 +681,87 @@ func _choose_observer_variant() -> StringName:
 	return pool[randi() % pool.size()]
 
 func _update_observer_manifested(delta: float, camera_node: Camera3D) -> void:
+	observer_encounter_age += delta
 	var distance := player.global_position.distance_to(observer.global_position)
 	var sight := _observer_visibility(camera_node, observer.global_position)
 	var has_sight: bool = sight["visible"]
 	var view_dot: float = sight["dot"]
 	_update_observer_exposure(delta, has_sight, view_dot, distance)
-
-	var target_presence := 0.28 if has_sight else 0.08
-	observer_presence = move_toward(observer_presence, target_presence, delta * 0.65)
-	if distance < 34.0:
-		var look_target := Vector3(player.global_position.x, observer.global_position.y, player.global_position.z)
-		var current_quat := observer.global_transform.basis.get_rotation_quaternion()
-		var target_xform := observer.global_transform.looking_at(look_target, Vector3.UP)
-		observer.global_transform.basis = Basis(current_quat.slerp(target_xform.basis.get_rotation_quaternion(), delta * 1.8))
-
-	if has_sight and view_dot > 0.82 and observer_seen_time > 1.35 and observer_escalation > 0.38:
-		_set_observer_state(ObserverState.PRESSURE, randf_range(4.5, 7.5))
+	observer_presence = move_toward(observer_presence, 1.0, delta * 0.85)
+	_face_observer(player.global_position, delta)
+	# A first readable silhouette, then purposeful movement. Looking buys time.
+	if observer_encounter_age > 2.8:
+		var stalk_speed := 0.28 if has_sight and view_dot > 0.82 else 1.25
+		_move_observer_toward(player.global_position, stalk_speed, delta)
+	if observer_encounter_age > 3.5 and (distance < 7.5 or observer_centered_time > 2.2 or observer_encounter_age > 10.0):
+		_set_observer_state(ObserverState.PRESSURE, 1.8)
+		observer_attack_charge = 0.0
 		return
-
-	if distance < 14.5 and (has_sight or observer_exposure_time > 1.0):
-		_set_observer_state(ObserverState.PRESSURE, randf_range(3.5, 6.0))
-		return
-
-	# When the player is looking away, take deliberate staggered steps closer
-	if not has_sight and distance > 16.0 and observer_escalation > 0.25:
-		observer_unseen_advance_timer += delta
-		if observer_unseen_advance_timer > 3.2:
-			observer_unseen_advance_timer = 0.0
-			var forward := (player.global_position - observer.global_position).normalized()
-			var advance_step := forward * randf_range(4.0, 7.5)
-			var candidate_pos := observer.global_position + advance_step
-			var grounded := _observer_grounded_position(candidate_pos)
-			if grounded != Vector3.INF and grounded.distance_to(player.global_position) > 12.0:
-				var new_sight := _observer_visibility(camera_node, grounded)
-				if not bool(new_sight["visible"]):
-					observer.global_position = grounded
-
-	if not has_sight and observer_seen_time > 0.35 and observer_state_timer < 4.0:
-		_conceal_observer(randf_range(16.0, 28.0))
-		return
-
+	# Never count an unseen spawn as an encounter that can simply time out.
 	if observer_state_timer <= 0.0:
-		if has_sight:
-			_set_observer_state(ObserverState.DISENGAGING, 2.4)
-		else:
-			_conceal_observer(randf_range(14.0, 24.0))
+		_set_observer_state(ObserverState.PRESSURE, 2.0)
 
 func _update_observer_pressure(delta: float, camera_node: Camera3D) -> void:
 	var distance := player.global_position.distance_to(observer.global_position)
 	var sight := _observer_visibility(camera_node, observer.global_position)
-	var has_sight: bool = sight["visible"]
-	var view_dot: float = sight["dot"]
-	_update_observer_exposure(delta, has_sight, view_dot, distance)
-
-	observer_presence = move_toward(observer_presence, 0.72 + observer_screen_threat * 0.28, delta * 1.2)
-	observer_dread = minf(1.0, observer_dread + delta * 0.045)
+	_update_observer_exposure(delta, sight["visible"], sight["dot"], distance)
+	observer_presence = move_toward(observer_presence, 1.0, delta * 1.8)
+	observer_attack_charge = clampf(1.0 - observer_state_timer / 1.8, 0.0, 1.0)
+	observer_dread = move_toward(observer_dread, 0.72, delta * 0.65)
+	_face_observer(player.global_position, delta)
 	_apply_observer_light_pressure()
-
-	var look_target := Vector3(player.global_position.x, observer.global_position.y, player.global_position.z)
-	var current_quat := observer.global_transform.basis.get_rotation_quaternion()
-	var target_xform := observer.global_transform.looking_at(look_target, Vector3.UP)
-	observer.global_transform.basis = Basis(current_quat.slerp(target_xform.basis.get_rotation_quaternion(), delta * 3.4))
-
-	if distance > 10.0 and not has_sight and observer_relocation_timer <= 0.0:
-		var flank_min := lerpf(14.0, 9.0, observer_escalation)
-		var flank_max := lerpf(24.0, 16.0, observer_escalation)
-		if _place_observer_for_state(flank_min, flank_max, true):
-			observer_relocation_timer = randf_range(3.5, 6.0)
-			return
-
-	if distance < 6.8 and has_sight:
-		_observer_attack_player()
-		return
-
-	if observer_seen_time > 2.6 and observer_composure > 0.35 and observer_escalation > 0.45:
-		_begin_observer_pursuit()
-		return
-
-	if not has_sight and observer_unseen_time > 4.2:
-		_set_observer_state(ObserverState.DISENGAGING, 2.0)
-		return
-
+	# The held pose and gathering breath are an explicit, consistent chase warning.
 	if observer_state_timer <= 0.0:
-		if observer_escalation > 0.55 and randf() < 0.45:
-			_begin_observer_pursuit()
-		else:
-			_set_observer_state(ObserverState.DISENGAGING, 2.2)
+		_begin_observer_pursuit()
 
 func _begin_observer_pursuit() -> void:
-	_set_observer_state(ObserverState.PURSUIT, randf_range(6.5, 10.5))
+	_set_observer_state(ObserverState.PURSUIT, 24.0)
 	observer_attack_charge = 0.0
 	observer_blocked_time = 0.0
 	observer_escape_time = 0.0
+	observer_last_known = player.global_position
+	observer_route_timer = 0.0
 	_apply_observer_pose(&"slump")
 
 func _update_observer_pursuit(delta: float, camera_node: Camera3D) -> void:
 	var distance := player.global_position.distance_to(observer.global_position)
 	var sight := _observer_visibility(camera_node, observer.global_position)
-	var has_sight: bool = sight["visible"]
-	var view_dot: float = sight["dot"]
-	_update_observer_exposure(delta, has_sight, view_dot, distance)
-
+	_update_observer_exposure(delta, sight["visible"], sight["dot"], distance)
 	observer_presence = 1.0
-	observer_dread = 1.0
+	observer_dread = move_toward(observer_dread, 1.0, delta)
 	_apply_observer_light_pressure()
-
-	var chase_speed := lerpf(2.2, 4.4, observer_escalation)
-	if has_sight and view_dot > 0.65:
-		chase_speed *= 0.62
-		observer_composure = maxf(0.0, observer_composure - delta * 0.18)
+	# Creature perception is independent of where the player's camera is facing.
+	var line_of_sight: bool = sight["samples"] >= 2
+	var speed := Vector2(player.velocity.x, player.velocity.z).length()
+	var heard := speed > 3.5 and distance < 12.0
+	if line_of_sight or heard:
+		observer_last_known = player.global_position
+		observer_escape_time = 0.0
 	else:
-		chase_speed *= 1.25
-
-	var look_target := Vector3(player.global_position.x, observer.global_position.y, player.global_position.z)
-	var current_quat := observer.global_transform.basis.get_rotation_quaternion()
-	var target_xform := observer.global_transform.looking_at(look_target, Vector3.UP)
-	observer.global_transform.basis = Basis(current_quat.slerp(target_xform.basis.get_rotation_quaternion(), delta * 4.2))
-
-	var step_direction := (player.global_position - observer.global_position)
-	step_direction.y = 0.0
-	if step_direction.length_squared() > 0.01:
-		step_direction = step_direction.normalized()
-		var candidate_move := observer.global_position + step_direction * chase_speed * delta
-		var grounded := _observer_grounded_position(candidate_move)
-		if grounded != Vector3.INF:
-			observer.global_position = grounded
-			observer_blocked_time = 0.0
-		else:
-			observer_blocked_time += delta
-
-	if distance < 2.3:
+		observer_escape_time += delta
+	var chase_speed := lerpf(3.45, 3.95, observer_escalation)
+	_move_observer_toward(observer_last_known, chase_speed, delta)
+	# Contact must have a clear physical path, including at corners and thin walls.
+	var contact_distance := player.global_position.distance_to(observer.global_position)
+	if contact_distance < 1.05 and line_of_sight and _observer_has_walk_path(observer.global_position, player.global_position):
 		_observer_attack_player()
 		return
+	if observer_escape_time > 5.5 or (distance > 30.0 and observer_encounter_age > 8.0):
+		_set_observer_state(ObserverState.DISENGAGING, 1.6)
+	elif observer_state_timer <= 0.0 and not line_of_sight and not heard:
+		_set_observer_state(ObserverState.DISENGAGING, 1.6)
 
-	if distance > 28.0 or observer_blocked_time > 2.0:
-		observer_escape_time += delta
-		if observer_escape_time > 2.2:
-			_set_observer_state(ObserverState.DISENGAGING, 2.5)
-			return
-
-	if observer_composure <= 0.05 and has_sight and view_dot > 0.85:
-		_set_observer_state(ObserverState.DISENGAGING, 1.8)
-		return
-
-	if observer_state_timer <= 0.0:
-		_set_observer_state(ObserverState.DISENGAGING, 2.0)
-
-func _update_observer_capture(delta: float, camera_node: Camera3D) -> void:
+func _update_observer_capture(delta: float, _camera_node: Camera3D) -> void:
 	observer_capture_timer += delta
 	observer_capture_phase = clampf(observer_capture_timer / 1.65, 0.0, 1.0)
 	observer_presence = 1.0
 	observer_screen_threat = 1.0
 	observer_dread = 1.0
-	ballast_spark_intensity = maxf(ballast_spark_intensity, 0.95)
-
-	var target_anchor := player.global_position + (-camera_node.global_transform.basis.z * 1.45)
-	target_anchor.y = player.global_position.y + 0.05
-	observer.global_position = observer.global_position.lerp(target_anchor, delta * 8.5)
-	var face_pos := Vector3(player.global_position.x, observer.global_position.y, player.global_position.z)
-	if observer.global_position.distance_squared_to(face_pos) > 0.01:
-		observer.look_at(face_pos, Vector3.UP)
-
-	if player.has_method("set_movement_frozen"):
-		player.set_movement_frozen(true)
-
-	if observer_capture_timer >= 1.05 and not observer_capture_pending_reset:
-		observer_capture_pending_reset = true
-		player.global_position = observer_safe_position
+	# Keep the creature at real contact position; no teleport through the camera.
+	if observer_capture_timer >= 1.05 and not observer_defeated:
+		observer_defeated = true
 		observer.visible = false
-
-	if observer_capture_timer >= 1.65:
-		if player.has_method("set_movement_frozen"):
-			player.set_movement_frozen(false)
-		if player.has_method("trigger_recovery"):
-			player.trigger_recovery()
-		observer_capture_pending_reset = false
-		observer_capture_timer = 0.0
-		observer_capture_phase = 0.0
-		_set_observer_state(ObserverState.RECOVERY, randf_range(28.0, 48.0))
+		_show_observer_defeat()
 
 func _update_observer_exposure(delta: float, has_sight: bool, view_dot: float, distance: float) -> void:
 	observer_last_distance = distance
@@ -974,19 +790,21 @@ func _update_observer_exposure(delta: float, has_sight: bool, view_dot: float, d
 	else:
 		observer_learned_approach = move_toward(observer_learned_approach, 0.0, delta * 0.002)
 
-	var raw_exposure := smoothstep(0.40, 0.95, view_dot) if has_sight else 0.0
+	var raw_exposure := smoothstep(1.0, 4.0, observer_exposure_time) * (1.0 - smoothstep(4.0, 14.0, distance)) if has_sight else 0.0
 	observer_exposure_signal = move_toward(observer_exposure_signal, raw_exposure, delta * (2.8 if raw_exposure > observer_exposure_signal else 0.75))
 	var prox_factor := 1.0 - smoothstep(2.5, 18.0, distance)
 	observer_proximity_signal = move_toward(observer_proximity_signal, prox_factor, delta * 1.5)
 
 func _observer_attack_player() -> void:
-	if observer_attack_cooldown > 0.0 or observer_state == ObserverState.CAPTURE:
+	if observer_attack_cooldown > 0.0 or observer_state == ObserverState.CAPTURE or observer_defeated:
 		return
 	_set_observer_state(ObserverState.CAPTURE, 1.65)
 	observer_capture_timer = 0.0
 	observer_capture_phase = 0.0
-	observer_capture_pending_reset = false
 	observer_attack_cooldown = 12.0
+	observer_capture_count += 1
+	player.set_observer_capture(3600.0)
+	player.unequip_lighter()
 	_apply_observer_pose(&"slump")
 	ballast_spark_intensity = 1.0
 
@@ -1002,13 +820,10 @@ func _update_observer_recovery() -> void:
 	observer.visible = false
 	observer_presence = 0.0
 	if observer_state_timer <= 0.0:
-		_set_observer_state(ObserverState.DORMANT, randf_range(8.0, 16.0))
+		_set_observer_state(ObserverState.OBSERVING, 1.0)
 
 func _observer_recovery_delay() -> float:
-	var base_delay := lerpf(26.0, 12.0, observer_escalation)
-	if observer_learned_approach > 0.55:
-		base_delay *= 0.80
-	return randf_range(base_delay * 0.85, base_delay * 1.25)
+	return randf_range(20.0, 30.0) - observer_escalation * 6.0
 
 func _set_observer_state(next_state: ObserverState, duration: float) -> void:
 	observer_state = next_state
@@ -1037,107 +852,52 @@ func _place_observer_at_next_marker() -> void:
 		_set_observer_state(ObserverState.OBSERVING, randf_range(5.0, 9.0))
 
 func _place_observer_for_state(min_distance: float, max_distance: float, prefer_unseen: bool) -> bool:
-	if observer_markers.is_empty() or player == null:
+	if player == null or observer_navigation == null or not observer_navigation.ready:
 		return false
-	var camera_node := player.get_node_or_null("Head/Camera3D") as Camera3D
-	if camera_node == null:
-		return false
-	var best_index := -1
-	var best_score := INF
-	var target_distance := (min_distance + max_distance) * 0.5
-	var allow_edge_violation := observer_escalation > 0.64 and randf() < (0.035 + observer_escalation * 0.085)
-	for candidate_index in range(observer_markers.size()):
-		if observer_recent_markers.has(candidate_index):
-			continue
-		var grounded := _observer_grounded_position(observer_markers[candidate_index])
-		if grounded == Vector3.INF:
-			continue
-		var distance := player.global_position.distance_to(grounded)
-		if distance < min_distance or distance > max_distance:
-			continue
+	var camera_node := player.get_node("Head/Camera3D") as Camera3D
+	var candidates: Array[Dictionary] = []
+	var positions: Array[Vector3] = observer_markers.duplicate()
+	# Local samples cover the authored rooms even when no anchor faces the player.
+	for radius in [10.0, 14.0, 18.0]:
+		for index in range(16):
+			var angle := float(index) * TAU / 16.0
+			positions.append(player.global_position + Vector3(sin(angle), 0, cos(angle)) * radius)
+	for index in range(positions.size()):
+		var grounded := _observer_grounded_position(positions[index])
+		if grounded == Vector3.INF: continue
+		var distance := grounded.distance_to(player.global_position)
+		if distance < min_distance or distance > max_distance: continue
 		var sight := _observer_visibility(camera_node, grounded)
 		var view_dot: float = sight["dot"]
 		var samples: int = sight["samples"]
-		if prefer_unseen and not allow_edge_violation and view_dot > 0.42 and samples > 0:
-			continue
-		if allow_edge_violation and view_dot > 0.82 and samples > 0:
-			continue
-		var score := absf(distance - target_distance) + randf_range(0.0, 3.5)
-		var role: StringName = observer_marker_roles[candidate_index]
-		if role == &"doorway" and observer_variant in [&"doorway", &"intercept"]:
-			score -= 5.0
-		elif role == &"intersection" and observer_variant in [&"tail", &"peripheral"]:
-			score -= 4.0
-		elif role == &"dead_end" and observer_variant == &"sentinel":
-			score -= 3.5
-		elif role == &"pillar":
-			score -= 4.5
-		elif role == &"obscured":
-			score -= 2.2
-		if samples in [1, 2]:
-			score -= 3.6
-		elif samples == 0:
-			score += 2.4
-		if score < best_score:
-			best_score = score
-			best_index = candidate_index
-	if best_index < 0:
-		return false
-	observer_marker_index = best_index
-	observer.global_position = _observer_grounded_position(observer_markers[best_index])
-	var look_target := Vector3(player.global_position.x, observer.global_position.y, player.global_position.z)
-	if observer.global_position.distance_squared_to(look_target) > 0.01:
-		observer.look_at(look_target, Vector3.UP)
-
-	var chosen_role: StringName = observer_marker_roles[best_index]
-	var chosen_pose: StringName = &"sentinel"
-	if chosen_role in [&"pillar", &"doorway"]:
-		var to_obs := (observer.global_position - player.global_position).normalized()
-		var p_right := camera_node.global_transform.basis.x
-		chosen_pose = &"peek_left" if to_obs.dot(p_right) > 0.0 else &"peek_right"
-	elif chosen_role in [&"dead_end", &"distant"]:
-		chosen_pose = &"narrow_vigil" if randf() < 0.55 else &"sentinel"
-	elif observer_state in [ObserverState.PRESSURE, ObserverState.PURSUIT]:
-		chosen_pose = &"slump" if randf() < 0.65 else &"narrow_vigil"
-	else:
-		var candidate_poses: Array[StringName] = [&"sentinel", &"slump", &"narrow_vigil", &"peek_left", &"peek_right"]
-		chosen_pose = candidate_poses[randi() % candidate_poses.size()]
-	_apply_observer_pose(chosen_pose)
-
-	observer.visible = true
-	observer_seen_time = 0.0
-	observer_centered_time = 0.0
-	observer_exposure_time = 0.0
-	observer_unseen_time = 0.0
-	observer_presence = 0.0
-	observer_sway_phase = randf_range(0.0, TAU)
-	observer_recent_markers.push_back(best_index)
-	while observer_recent_markers.size() > 3:
-		observer_recent_markers.pop_front()
-	return true
+		var score := absf(distance - 12.0) * 0.6 + randf() * 1.4
+		# Prefer a silhouette in the current sightline, not a figure sealed in another room.
+		score += 18.0 if samples == 0 else 0.0
+		score += 8.0 if view_dot < 0.35 else absf(view_dot - 0.75) * 3.0
+		if prefer_unseen and samples > 0 and view_dot > 0.85: score += 12.0
+		if observer_recent_markers.has(index): score += 4.0
+		candidates.append({"position": grounded, "index": index, "score": score})
+	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.score < b.score)
+	for candidate in candidates:
+		if not observer_navigation.reachable(candidate.position, player.global_position): continue
+		observer.global_position = candidate.position
+		observer_marker_index = candidate.index
+		_face_observer(player.global_position, 1.0)
+		_apply_observer_pose(&"sentinel")
+		observer.visible = true
+		observer_seen_time = 0.0
+		observer_centered_time = 0.0
+		observer_exposure_time = 0.0
+		observer_unseen_time = 0.0
+		observer_presence = 0.0
+		observer_recent_markers.push_back(candidate.index)
+		while observer_recent_markers.size() > 3: observer_recent_markers.pop_front()
+		return true
+	return false
 
 func _observer_grounded_position(candidate: Vector3) -> Vector3:
-	var space := get_world_3d().direct_space_state
-	var floor_query := PhysicsRayQueryParameters3D.create(candidate + Vector3(0.0, 1.25, 0.0), candidate + Vector3(0.0, -0.85, 0.0))
-	floor_query.exclude = [player.get_rid()] if player != null else []
-	var floor_hit := space.intersect_ray(floor_query)
-	if floor_hit.is_empty():
-		return Vector3.INF
-	var floor_position: Vector3 = floor_hit["position"]
-	if absf(floor_position.y - candidate.y) > 0.48:
-		return Vector3.INF
-	var grounded := Vector3(candidate.x, floor_position.y + 0.015, candidate.z)
-	var capsule := CapsuleShape3D.new()
-	capsule.radius = 0.34
-	capsule.height = 2.72
-	var clearance := PhysicsShapeQueryParameters3D.new()
-	clearance.shape = capsule
-	clearance.transform = Transform3D(Basis.IDENTITY, grounded + Vector3(0.0, 1.36, 0.0))
-	clearance.collision_mask = 1
-	clearance.exclude = [player.get_rid()] if player != null else []
-	if not space.intersect_shape(clearance, 1).is_empty():
-		return Vector3.INF
-	return grounded
+	if observer_navigation == null: return Vector3.INF
+	return observer_navigation.ground(candidate)
 
 func _observer_visibility(camera_node: Camera3D, candidate: Vector3) -> Dictionary:
 	var camera_pos := camera_node.global_position
@@ -1170,10 +930,7 @@ func _observer_visibility(camera_node: Camera3D, candidate: Vector3) -> Dictiona
 	}
 
 func _observer_has_walk_path(from: Vector3, to: Vector3) -> bool:
-	var space := get_world_3d().direct_space_state
-	var query := PhysicsRayQueryParameters3D.create(from + Vector3(0.0, 0.5, 0.0), to + Vector3(0.0, 0.5, 0.0))
-	query.exclude = [player.get_rid()] if player != null else []
-	return space.intersect_ray(query).is_empty()
+	return observer_navigation != null and observer_navigation.can_cross(from, to)
 
 func _apply_observer_light_pressure() -> void:
 	if fixtures.is_empty() or observer == null:
@@ -1317,6 +1074,12 @@ func debug_observer_snapshot() -> Dictionary:
 		"view_dot": observer_last_view_dot,
 		"has_sight": observer_has_sight,
 		"sector": String(_observer_sector_for(player.global_position if player != null else Vector3.ZERO)),
+		"defeated": observer_defeated,
+		"captures": observer_capture_count,
+		"encounters": observer_encounters,
+		"navigation_ready": observer_navigation.ready,
+		"escape_time": observer_escape_time,
+		"route_points": observer_route.size(),
 		"total_anchors": observer_markers.size(),
 		"total_fixtures": fixtures.size()
 	}
@@ -1326,7 +1089,7 @@ func _update_presence_shader() -> void:
 		observer_material.set_shader_parameter("presence", clampf(observer_presence, 0.0, 1.0))
 		observer_material.set_shader_parameter("threat", clampf(observer_screen_threat, 0.0, 1.0))
 	if observer_head_material != null:
-		observer_head_material.emission_energy_multiplier = lerpf(0.16, 0.34, clampf(observer_screen_threat, 0.0, 1.0))
+		observer_head_material.emission_energy_multiplier = 0.0
 	if hud_atmosphere_material != null:
 		var capture_signal := clampf(observer_capture_timer / 1.65, 0.0, 1.0)
 		hud_atmosphere_material.set_shader_parameter("presence", clampf(observer_presence, 0.0, 1.0))
@@ -1334,7 +1097,7 @@ func _update_presence_shader() -> void:
 		hud_atmosphere_material.set_shader_parameter("exposure", clampf(observer_exposure_signal, 0.0, 1.0))
 		hud_atmosphere_material.set_shader_parameter("proximity", clampf(observer_proximity_signal, 0.0, 1.0))
 		hud_atmosphere_material.set_shader_parameter("capture", capture_signal)
-		hud_atmosphere_material.set_shader_parameter("capture_phase", clampf(observer_capture_phase / 1.65, 0.0, 1.0))
+		hud_atmosphere_material.set_shader_parameter("capture_phase", clampf(observer_capture_phase, 0.0, 1.0))
 		hud_atmosphere_material.set_shader_parameter("silence", clampf(silence_intensity, 0.0, 1.0))
 
 func _show_hud_toast(msg: String) -> void:
@@ -1380,3 +1143,125 @@ func _update_lighter_hud(_delta: float) -> void:
 		hud_status_label.text = "READY" if is_eq else "STOWED"
 		hud_status_label.add_theme_color_override("font_color", Color("#8e7c54"))
 		hud_fuel_fill.color = Color("#9e6b22")
+
+func _physics_process(delta: float) -> void:
+	if observer_navigation != null and not observer_navigation.ready:
+		observer_navigation.bake_slice()
+	if not observer_defeated and not observer_debug_hold:
+		_update_observer_presence(delta)
+
+func _face_observer(target: Vector3, delta: float) -> void:
+	var direction := target - observer.global_position
+	direction.y = 0.0
+	if direction.length_squared() < 0.001: return
+	var angle := atan2(-direction.x, -direction.z)
+	observer.rotation.y = lerp_angle(observer.rotation.y, angle, minf(delta * 7.0, 1.0))
+
+func _move_observer_toward(target: Vector3, speed: float, delta: float) -> void:
+	observer_route_timer -= delta
+	var grounded_target := _observer_grounded_position(target)
+	var goal := target
+	if grounded_target != Vector3.INF and _observer_has_walk_path(observer.global_position, grounded_target):
+		goal = grounded_target
+	else:
+		if observer_route_timer <= 0.0:
+			observer_route = observer_navigation.route(observer.global_position, target)
+			observer_route_timer = 0.7
+		while not observer_route.is_empty() and observer.global_position.distance_to(observer_route[0]) < 0.25:
+			observer_route.remove_at(0)
+		if observer_route.is_empty():
+			observer_blocked_time += delta
+			return
+		# Skip visible waypoints only after a capsule sweep, so corners cannot be cut.
+		for index in range(mini(observer_route.size() - 1, 12), 0, -1):
+			if _observer_has_walk_path(observer.global_position, observer_route[index]):
+				for _skip in range(index): observer_route.remove_at(0)
+				break
+		goal = observer_route[0]
+	var direction := goal - observer.global_position
+	direction.y = 0.0
+	if direction.length() < 0.025: return
+	var candidate := observer.global_position + direction.normalized() * minf(speed * delta, direction.length())
+	var grounded := _observer_grounded_position(candidate)
+	if grounded != Vector3.INF and _observer_has_walk_path(observer.global_position, grounded):
+		observer.global_position = grounded
+		observer_blocked_time = 0.0
+		_face_observer(goal + direction.normalized(), delta)
+	else:
+		observer_blocked_time += delta
+		observer_route_timer = 0.0
+
+func _show_observer_defeat() -> void:
+	var overlay := CanvasLayer.new()
+	overlay.name = "RunEnded"
+	overlay.layer = 30
+	add_child(overlay)
+	var blackout := ColorRect.new()
+	blackout.color = Color(0.006, 0.007, 0.006, 1.0)
+	blackout.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(blackout)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	blackout.add_child(center)
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 24)
+	center.add_child(column)
+	var title := Label.new()
+	title.text = "IT FOUND YOU"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 32)
+	title.add_theme_color_override("font_color", Color(0.64, 0.65, 0.58))
+	column.add_child(title)
+	var hint := Label.new()
+	hint.text = "Break sight. Quiet your footsteps. Find another way.\n\n[R]  START AGAIN"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", 16)
+	hint.add_theme_color_override("font_color", Color(0.37, 0.39, 0.35))
+	column.add_child(hint)
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	observer_feedback = 0.0
+	observer_screen_threat = 0.0
+	observer_audio.set_threat(0.0, 0.0, false)
+
+func _unhandled_input(event: InputEvent) -> void:
+	if observer_defeated and event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_R or event.physical_keycode == KEY_R):
+		get_viewport().set_input_as_handled()
+		get_tree().reload_current_scene()
+
+func debug_observer_scenario(scenario: String) -> Dictionary:
+	observer_debug_hold = false
+	observer_defeated = false
+	player.observer_capture_lock = 0.0
+	observer_attack_cooldown = 0.0
+	observer_capture_timer = 0.0
+	observer_escape_time = 0.0
+	observer_route_timer = 0.0
+	observer_route.clear()
+	player.global_position = Vector3(1.2, 0.02, 3.2)
+	player.velocity = Vector3.ZERO
+	player.pitch = 0.0
+	player.rotation.y = 0.0
+	player.get_node("Head/Camera3D").rotation = Vector3.ZERO
+	var ended := get_node_or_null("RunEnded")
+	if ended != null: ended.queue_free()
+	match scenario:
+		"natural":
+			observer_encounters = 0
+			observer_escalation = 0.06
+			_set_observer_state(ObserverState.DORMANT, 7.0)
+		"portrait", "chase":
+			observer.global_position = Vector3(1.2, 0.018, -3.0 if scenario == "portrait" else -7.0)
+			observer.rotation.y = PI
+			observer.visible = true
+			observer_presence = 1.0
+			observer_encounter_age = 0.0
+			if scenario == "portrait":
+				observer_debug_hold = true
+				_set_observer_state(ObserverState.MANIFESTED, 999.0)
+				observer.update_pose(0.016, 0.0, 0.1, false)
+				_update_presence_shader()
+			else:
+				_begin_observer_pursuit()
+		_:
+			return {"ok": false, "error": "Unknown scenario"}
+	return debug_observer_snapshot()

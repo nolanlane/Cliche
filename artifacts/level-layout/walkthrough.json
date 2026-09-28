@@ -1,0 +1,32 @@
+{
+  "failures": [],
+  "pass": true,
+  "remaining_pickups": [],
+  "simulated_seconds": 340.516666666686,
+  "visited": [
+    "Reception counter",
+    "North office pickup",
+    "North deep dead end",
+    "North pocket pickup",
+    "East office pickup",
+    "Crawl entry",
+    "Crawl alcove pickup",
+    "Crawl northern elbow",
+    "Crawl return hatch",
+    "Forest column edge",
+    "Forest pickup",
+    "Forest west pickup",
+    "Archive stacks",
+    "Archive pickup",
+    "Sump ramp down",
+    "Sump pickup",
+    "Sump pump doorway",
+    "Sump rear service bay",
+    "Sump ramp up",
+    "East connecting hall",
+    "Folded hall approach",
+    "Nowhere pickup recess",
+    "Nowhere end",
+    "Return to reception"
+  ]
+}
